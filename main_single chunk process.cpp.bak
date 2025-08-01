@@ -1,0 +1,437 @@
+/// ToDo
+/// Master 강제 종료 기능 추가
+/// Master 강제 종료 시, Worker 자동 종료 추가
+/// 
+#include <iostream>
+#include <vector>
+#include <thread>
+#include <string>
+#include <sstream>
+#include <chrono>
+#include <random>
+
+#include <locale>
+#include <codecvt>
+
+// 문자열 변환 유틸리티 (wstring <-> string)
+std::string wstring_to_utf8(const std::wstring& wstr) {
+    std::wstring_convert<std::codecvt_utf8<wchar_t>> conv;
+    return conv.to_bytes(wstr);
+}
+
+std::wstring utf8_to_wstring(const std::string& str) {
+    std::wstring_convert<std::codecvt_utf8<wchar_t>> conv;
+    return conv.from_bytes(str);
+}
+
+#include <fcntl.h>   /// _O_U16TEXT 정의를 위해 필요
+#include <io.h>      /// _setmode 정의를 위해 필요
+
+// Windows 소켓 헤더
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#pragma comment(lib, "ws2_32.lib")
+#else
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+#endif
+
+// Windows/Linux 호환성을 위한 매크로
+#ifdef _WIN32
+typedef int socklen_t;
+#define close closesocket
+/// #define MSG_WAITALL 0 /// comment out because it is already defined in 'windock2.h.
+#endif
+
+// Point 구조체
+struct Point3D {
+    float x, y, z;
+    Point3D(float x = 0, float y = 0, float z = 0) : x(x), y(y), z(z) {}
+};
+
+// 포인트 클라우드 청크
+struct PointCloudChunk {
+    int chunk_id;
+    std::vector<Point3D> points;
+
+    // 직렬화
+    std::string serialize() const {
+        std::stringstream ss;
+        ss << chunk_id << " " << points.size() << " ";
+        for (const auto& p : points) {
+            ss << p.x << " " << p.y << " " << p.z << " ";
+        }
+        return ss.str();
+    }
+
+    // 역직렬화
+    static PointCloudChunk deserialize(const std::string& data) {
+        PointCloudChunk chunk;
+        std::stringstream ss(data);
+        size_t size;
+        ss >> chunk.chunk_id >> size;
+
+        chunk.points.reserve(size);
+        for (size_t i = 0; i < size; ++i) {
+            Point3D p;
+            ss >> p.x >> p.y >> p.z;
+            chunk.points.push_back(p);
+        }
+        return chunk;
+    }
+};
+
+// 처리 결과
+struct ProcessResult {
+    int chunk_id;
+    float avg_distance;
+    int point_count;
+
+    std::string serialize() const {
+        std::stringstream ss;
+        ss << chunk_id << " " << avg_distance << " " << point_count;
+        return ss.str();
+    }
+
+    static ProcessResult deserialize(const std::string& data) {
+        ProcessResult result;
+        std::stringstream ss(data);
+        ss >> result.chunk_id >> result.avg_distance >> result.point_count;
+        return result;
+    }
+};
+
+// Windows Winsock 초기화 클래스
+class WinsockInitializer {
+public:
+    WinsockInitializer() {
+#ifdef _WIN32
+        WSADATA wsaData;
+        int result = WSAStartup(MAKEWORD(2, 2), &wsaData);
+        if (result != 0) {
+            std::cerr << "WSAStartup failed: " << result << std::endl;
+            initialized = false;
+        }
+        else {
+            initialized = true;
+        }
+#else
+        initialized = true;
+#endif
+    }
+
+    ~WinsockInitializer() {
+#ifdef _WIN32
+        if (initialized) {
+            WSACleanup();
+        }
+#endif
+    }
+
+    bool isInitialized() const { return initialized; }
+
+private:
+    bool initialized;
+};
+
+// 네트워크 유틸리티
+class NetworkUtils {
+public:
+    static bool sendData(SOCKET socket, const std::string& data) {
+        uint32_t size = static_cast<uint32_t>(data.length());
+
+        // 크기 전송
+        if (send(socket, reinterpret_cast<const char*>(&size), sizeof(size), 0) != sizeof(size)) {
+            return false;
+        }
+
+        // 데이터 전송
+        const char* buffer = data.c_str();
+        int totalSent = 0;
+        int dataSize = static_cast<int>(size);
+
+        while (totalSent < dataSize) {
+            int sent = send(socket, buffer + totalSent, dataSize - totalSent, 0);
+            if (sent == SOCKET_ERROR) {
+                return false;
+            }
+            totalSent += sent;
+        }
+        return true;
+    }
+
+    static std::string receiveData(SOCKET socket) {
+        uint32_t size;
+
+        // 크기 수신
+        int received = recv(socket, reinterpret_cast<char*>(&size), sizeof(size), 0);
+        if (received != sizeof(size)) {
+            return "";
+        }
+
+        // 데이터 수신
+        std::string data(size, '\0');
+        int totalReceived = 0;
+        int dataSize = static_cast<int>(size);
+
+        while (totalReceived < dataSize) {
+            int received = recv(socket, &data[totalReceived], dataSize - totalReceived, 0);
+            if (received == SOCKET_ERROR || received == 0) {
+                return "";
+            }
+            totalReceived += received;
+        }
+
+        return data;
+    }
+};
+
+// Master 서버
+class MasterServer {
+private:
+    std::vector<PointCloudChunk> chunks;
+    std::vector<ProcessResult> results;
+    int port;
+
+public:
+    MasterServer(int p) : port(p) {}
+
+    void generateSampleData() {
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        std::uniform_real_distribution<float> dis(-100.0f, 100.0f);
+
+        // 10개의 청크로 분할된 샘플 포인트 클라우드 생성
+        for (int chunk_id = 0; chunk_id < 10; ++chunk_id) {
+            PointCloudChunk chunk;
+            chunk.chunk_id = chunk_id;
+
+            // 각 청크마다 1000개의 포인트
+            for (int i = 0; i < 1000; ++i) {
+                chunk.points.emplace_back(dis(gen), dis(gen), dis(gen));
+            }
+            chunks.push_back(chunk);
+        }
+        std::wcout << L"Generated " << chunks.size() << L" chunks with total "
+            << chunks.size() * 1000 << L" points\n";
+    }
+
+    void start() {
+        SOCKET server_sock = socket(AF_INET, SOCK_STREAM, 0);
+        if (server_sock == INVALID_SOCKET) {
+            std::wcerr << L"Socket creation failed\n";
+            return;
+        }
+
+        // SO_REUSEADDR 설정
+        int opt = 1;
+        setsockopt(server_sock, SOL_SOCKET, SO_REUSEADDR,
+            reinterpret_cast<const char*>(&opt), sizeof(opt));
+
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_addr.s_addr = INADDR_ANY;
+        addr.sin_port = htons(port);
+
+        if (bind(server_sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == SOCKET_ERROR) {
+            std::wcerr << L"Bind failed\n";
+            close(server_sock);
+            return;
+        }
+
+        if (listen(server_sock, 10) == SOCKET_ERROR) {
+            std::wcerr << L"Listen failed\n";
+            close(server_sock);
+            return;
+        }
+
+        std::wcout << L"Master server listening on port " << port << L"\n";
+
+        int chunk_index = 0;
+
+        while (chunk_index < static_cast<int>(chunks.size())) {
+            sockaddr_in client_addr{};
+            socklen_t client_len = sizeof(client_addr);
+            SOCKET client_sock = accept(server_sock, reinterpret_cast<sockaddr*>(&client_addr), &client_len);
+
+            if (client_sock == INVALID_SOCKET) continue;
+
+            char ipStr[INET_ADDRSTRLEN];
+            inet_ntop(AF_INET, &client_addr.sin_addr, ipStr, INET_ADDRSTRLEN);
+            std::wcout << L"Worker connected: " << ipStr << L"\n";
+
+            // 청크 전송
+            if (chunk_index < static_cast<int>(chunks.size())) {
+                std::string chunk_data = chunks[chunk_index].serialize();
+                if (NetworkUtils::sendData(client_sock, chunk_data)) {
+                    std::wcout << L"Sent chunk " << chunk_index << L" to worker\n";
+
+                    // 결과 수신
+                    std::string result_data = NetworkUtils::receiveData(client_sock);
+                    if (!result_data.empty()) {
+                        ProcessResult result = ProcessResult::deserialize(result_data);
+                        results.push_back(result);
+                        std::wcout << L"Received result for chunk " << result.chunk_id
+                            << L": avg_distance=" << result.avg_distance
+                            << L", points=" << result.point_count << "\n";
+                    }
+                    chunk_index++;
+                }
+            }
+
+            close(client_sock);
+        }
+
+        close(server_sock);
+        printFinalResults();
+    }
+
+private:
+    void printFinalResults() {
+        std::wcout << L"\n=== Final Results ===\n";
+        float total_avg = 0.0f;
+        int total_points = 0;
+
+        for (const auto& result : results) {
+            total_avg += result.avg_distance;
+            total_points += result.point_count;
+            std::wcout << L"Chunk " << result.chunk_id << L": "
+                << result.point_count << L" points, avg_distance="
+                << result.avg_distance << L"\n";
+        }
+
+        if (!results.empty()) {
+            std::wcout << L"Overall average distance: " << total_avg / results.size() << L"\n";
+            std::wcout << L"Total points processed: " << total_points << L"\n";
+        }
+    }
+};
+
+// Worker 클라이언트
+class WorkerClient {
+private:
+    std::string master_ip;
+    int master_port;
+
+public:
+    WorkerClient(const std::string& ip, int port) : master_ip(ip), master_port(port) {}
+
+    void connect() {
+        SOCKET sock = socket(AF_INET, SOCK_STREAM, 0);
+        if (sock == INVALID_SOCKET) {
+            std::wcerr << L"Socket creation failed\n";
+            return;
+        }
+
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(master_port);
+
+        if (InetPtonA(AF_INET, master_ip.c_str(), &addr.sin_addr) != 1) {
+            std::wcerr << L"Invalid IP address\n";
+            close(sock);
+            return;
+        }
+
+        if (addr.sin_addr.s_addr == INADDR_NONE) {
+            std::wcerr << L"Invalid IP address\n";
+            close(sock);
+            return;
+        }
+
+        if (::connect(sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == SOCKET_ERROR) {
+            std::wcerr << L"Connection to master failed\n";
+            close(sock);
+            return;
+        }
+
+        std::wcout << L"Connected to master server\n";
+
+        // 청크 수신
+        std::string chunk_data = NetworkUtils::receiveData(sock);
+        if (!chunk_data.empty()) {
+            PointCloudChunk chunk = PointCloudChunk::deserialize(chunk_data);
+            std::wcout << L"Received chunk " << chunk.chunk_id
+                << L" with " << chunk.points.size() << L" points\n";
+
+            // 포인트 클라우드 처리
+            ProcessResult result = processPointCloud(chunk);
+
+            // 결과 전송
+            std::string result_data = result.serialize();
+            NetworkUtils::sendData(sock, result_data);
+            std::wcout << L"Sent processing result for chunk " << result.chunk_id << L"\n";
+        }
+
+        close(sock);
+    }
+
+private:
+    ProcessResult processPointCloud(const PointCloudChunk& chunk) {
+        std::wcout << L"Processing chunk " << chunk.chunk_id << L"...\n";
+
+        // 시뮬레이션: 원점으로부터의 평균 거리 계산
+        float total_distance = 0.0f;
+        for (const auto& point : chunk.points) {
+            float distance = std::sqrt(point.x * point.x + point.y * point.y + point.z * point.z);
+            total_distance += distance;
+        }
+
+        // 처리 시간 시뮬레이션
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+        ProcessResult result;
+        result.chunk_id = chunk.chunk_id;
+        result.avg_distance = total_distance / chunk.points.size();
+        result.point_count = static_cast<int>(chunk.points.size());
+
+        std::wcout << L"Finished processing chunk " << chunk.chunk_id
+            << L" (avg_distance: " << result.avg_distance << ")\n";
+
+        return result;
+    }
+};
+
+int wmain(int argc, wchar_t* argv[]) {
+    // 콘솔 출력을 유니코드로 설정 (윈도우 전용)
+    auto retval = _setmode(_fileno(stdout), _O_U16TEXT);
+
+    // Winsock 초기화
+    WSADATA wsaData;
+    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+        std::wcerr << L"WSAStartup 실패\n";
+        return 1;
+    }
+
+    if (argc < 2) {
+        std::wcout << L"Usage:\n";
+        std::wcout << L"  Master mode: " << argv[0] << L" master [port]\n";
+        std::wcout << L"  Worker mode: " << argv[0] << L" worker [master_ip] [master_port]\n";
+        return 1;
+    }
+
+    std::wstring mode = argv[1];
+
+    if (mode == L"master") {
+        int port = (argc >= 3) ? _wtoi(argv[2]) : 8080;
+        MasterServer server(port);
+        server.generateSampleData();
+        server.start();
+    }
+    else if (mode == L"worker") {
+        std::wstring master_ip = (argc >= 3) ? argv[2] : L"127.0.0.1";
+        int master_port = (argc >= 4) ? _wtoi(argv[3]) : 8080;
+        WorkerClient worker(wstring_to_utf8(master_ip), master_port);
+        worker.connect();
+    }
+    else {
+        std::wcerr << L"Invalid mode. Use 'master' or 'worker'\n\n";
+        return 1;
+    }
+
+    WSACleanup();
+    return 0;
+}

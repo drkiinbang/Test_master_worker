@@ -5173,7 +5173,7 @@ static bool ParseNode(Node *node, std::string *err, const detail::json &o,
     if (msft_lod_ext.Has("ids")) {
       auto idsArr = msft_lod_ext.Get("ids");
       for (size_t i = 0; i < idsArr.ArrayLen(); ++i) {
-        node->lods.emplace_back(idsArr.Get(i).GetNumberAsInt());
+        node->lods.emplace_back(idsArr.Get(static_cast<int>(i)).GetNumberAsInt());
       }
     } else {
       if (err) {
@@ -5202,7 +5202,7 @@ static bool ParseScene(Scene *scene, std::string *err, const detail::json &o,
     if (audio_ext.Has("emitters")) {
       auto emittersArr = audio_ext.Get("emitters");
       for (size_t i = 0; i < emittersArr.ArrayLen(); ++i) {
-        scene->audioEmitters.emplace_back(emittersArr.Get(i).GetNumberAsInt());
+        scene->audioEmitters.emplace_back(emittersArr.Get(static_cast<int>(i)).GetNumberAsInt());
       }
     } else {
       if (err) {
@@ -5390,7 +5390,7 @@ static bool ParseMaterial(Material *material, std::string *err, std::string *war
     if (msft_lod_ext.Has("ids")) {
       auto idsArr = msft_lod_ext.Get("ids");
       for (size_t i = 0; i < idsArr.ArrayLen(); ++i) {
-        material->lods.emplace_back(idsArr.Get(i).GetNumberAsInt());
+        material->lods.emplace_back(idsArr.Get(static_cast<int>(i)).GetNumberAsInt());
       }
     } else {
       if (err) {

@@ -1,25 +1,25 @@
 ///////////////////////////////////////////////////////////////////////////////
 /// Point Cloud Distributed Processing System
 /// 
-/// ÇÁ·Î±×·¥ ¸ñÀû:
-/// - ´ë¿ë·® Point Cloud µ¥ÀÌÅÍ¸¦ ¿©·¯ ¿öÄ¿ ³ëµå¿¡ ºĞ»ê Ã³¸®ÇÏ´Â ½Ã½ºÅÛ
-/// - Master-Worker ÆĞÅÏÀ» »ç¿ëÇÑ ºĞ»ê ÄÄÇ»ÆÃ ±¸Çö
-/// - TCP ¼ÒÄÏ Åë½ÅÀ» ÅëÇÑ ³×Æ®¿öÅ© ±â¹İ ÀÛ¾÷ ºĞ¹è
+/// í”„ë¡œê·¸ë¨ ëª©ì :
+/// - ëŒ€ìš©ëŸ‰ Point Cloud ë°ì´í„°ë¥¼ ì—¬ëŸ¬ ì›Œì»¤ ë…¸ë“œì— ë¶„ì‚° ì²˜ë¦¬í•˜ëŠ” ì‹œìŠ¤í…œ
+/// - Master-Worker íŒ¨í„´ì„ ì‚¬ìš©í•œ ë¶„ì‚° ì»´í“¨íŒ… êµ¬í˜„
+/// - TCP ì†Œì¼“ í†µì‹ ì„ í†µí•œ ë„¤íŠ¸ì›Œí¬ ê¸°ë°˜ ì‘ì—… ë¶„ë°°
 /// 
-/// ÀüÃ¼ Èå¸§:
-/// 1. Master: Point Cloud µ¥ÀÌÅÍ¸¦ Ã»Å© ´ÜÀ§·Î ºĞÇÒÇÏ¿© »ı¼º
-/// 2. Master: TCP ¼­¹ö¸¦ ½ÃÀÛÇÏ°í ¿öÄ¿ÀÇ ¿¬°áÀ» ´ë±â
-/// 3. Worker: Master¿¡ ¿¬°áÇÏ¿© Ã³¸®ÇÒ Ã»Å© ¿äÃ»
-/// 4. Master: Ã»Å©¸¦ ¿öÄ¿¿¡°Ô Àü¼Û
-/// 5. Worker: Ã»Å© µ¥ÀÌÅÍ Ã³¸® (¿øÁ¡À¸·ÎºÎÅÍÀÇ Æò±Õ °Å¸® °è»ê)
-/// 6. Worker: Ã³¸® °á°ú¸¦ Master¿¡°Ô ¹İÈ¯
-/// 7. Master: ¸ğµç Ã»Å© Ã³¸® ¿Ï·á ½Ã ÃÖÁ¾ °á°ú Ãâ·Â
+/// ì „ì²´ íë¦„:
+/// 1. Master: Point Cloud ë°ì´í„°ë¥¼ ì²­í¬ ë‹¨ìœ„ë¡œ ë¶„í• í•˜ì—¬ ìƒì„±
+/// 2. Master: TCP ì„œë²„ë¥¼ ì‹œì‘í•˜ê³  ì›Œì»¤ì˜ ì—°ê²°ì„ ëŒ€ê¸°
+/// 3. Worker: Masterì— ì—°ê²°í•˜ì—¬ ì²˜ë¦¬í•  ì²­í¬ ìš”ì²­
+/// 4. Master: ì²­í¬ë¥¼ ì›Œì»¤ì—ê²Œ ì „ì†¡
+/// 5. Worker: ì²­í¬ ë°ì´í„° ì²˜ë¦¬ (ì›ì ìœ¼ë¡œë¶€í„°ì˜ í‰ê·  ê±°ë¦¬ ê³„ì‚°)
+/// 6. Worker: ì²˜ë¦¬ ê²°ê³¼ë¥¼ Masterì—ê²Œ ë°˜í™˜
+/// 7. Master: ëª¨ë“  ì²­í¬ ì²˜ë¦¬ ì™„ë£Œ ì‹œ ìµœì¢… ê²°ê³¼ ì¶œë ¥
 /// 
-/// ÁÖ¿ä Æ¯Â¡:
-/// - ¸ÖÆ¼½º·¹µù Áö¿øÀ¸·Î µ¿½Ã ´ÙÁß ¿öÄ¿ Ã³¸® °¡´É
-/// - Windows/Linux Å©·Î½º ÇÃ·§Æû È£È¯¼º
-/// - µ¥ÀÌÅÍ Á÷·ÄÈ­/¿ªÁ÷·ÄÈ­¸¦ ÅëÇÑ ³×Æ®¿öÅ© Àü¼Û
-/// - ¿øÀÚÀû ¿¬»êÀ» ÅëÇÑ ½º·¹µå ¾ÈÀü¼º º¸Àå
+/// ì£¼ìš” íŠ¹ì§•:
+/// - ë©€í‹°ìŠ¤ë ˆë”© ì§€ì›ìœ¼ë¡œ ë™ì‹œ ë‹¤ì¤‘ ì›Œì»¤ ì²˜ë¦¬ ê°€ëŠ¥
+/// - Windows/Linux í¬ë¡œìŠ¤ í”Œë«í¼ í˜¸í™˜ì„±
+/// - ë°ì´í„° ì§ë ¬í™”/ì—­ì§ë ¬í™”ë¥¼ í†µí•œ ë„¤íŠ¸ì›Œí¬ ì „ì†¡
+/// - ì›ìì  ì—°ì‚°ì„ í†µí•œ ìŠ¤ë ˆë“œ ì•ˆì „ì„± ë³´ì¥
 ///////////////////////////////////////////////////////////////////////////////
 
 #include <iostream>
@@ -35,8 +35,8 @@
 #include <locale>
 #include <codecvt>
 
-/// À¯´ÏÄÚµå ¹®ÀÚ¿­ º¯È¯ À¯Æ¿¸®Æ¼ ÇÔ¼öµé
-/// wstring°ú UTF-8 string °£ÀÇ º¯È¯À» Ã³¸®
+/// ìœ ë‹ˆì½”ë“œ ë¬¸ìì—´ ë³€í™˜ ìœ í‹¸ë¦¬í‹° í•¨ìˆ˜ë“¤
+/// wstringê³¼ UTF-8 string ê°„ì˜ ë³€í™˜ì„ ì²˜ë¦¬
 std::string wstring_to_utf8(const std::wstring& wstr) {
     std::wstring_convert<std::codecvt_utf8<wchar_t>> conv;
     return conv.to_bytes(wstr);
@@ -47,11 +47,11 @@ std::wstring utf8_to_wstring(const std::string& str) {
     return conv.from_bytes(str);
 }
 
-/// Windows ÇÃ·§Æû¿ë Çì´õ ÆÄÀÏµé
-#include <fcntl.h>   /// _O_U16TEXT Á¤ÀÇ¸¦ À§ÇØ ÇÊ¿ä
-#include <io.h>      /// _setmode Á¤ÀÇ¸¦ À§ÇØ ÇÊ¿ä
+/// Windows í”Œë«í¼ìš© í—¤ë” íŒŒì¼ë“¤
+#include <fcntl.h>   /// _O_U16TEXT ì •ì˜ë¥¼ ìœ„í•´ í•„ìš”
+#include <io.h>      /// _setmode ì •ì˜ë¥¼ ìœ„í•´ í•„ìš”
 
-/// Windows/Linux Å©·Î½º ÇÃ·§Æû ¼ÒÄÏ ¶óÀÌºê·¯¸® Ã³¸®
+/// Windows/Linux í¬ë¡œìŠ¤ í”Œë«í¼ ì†Œì¼“ ë¼ì´ë¸ŒëŸ¬ë¦¬ ì²˜ë¦¬
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -63,29 +63,29 @@ std::wstring utf8_to_wstring(const std::string& str) {
 #include <unistd.h>
 #endif
 
-/// Windows/Linux È£È¯¼ºÀ» À§ÇÑ ¸ÅÅ©·Î Á¤ÀÇ
+/// Windows/Linux í˜¸í™˜ì„±ì„ ìœ„í•œ ë§¤í¬ë¡œ ì •ì˜
 #ifdef _WIN32
 typedef int socklen_t;
 #define close closesocket
-/// MSG_WAITALLÀº ÀÌ¹Ì winsock2.h¿¡ Á¤ÀÇµÇ¾î ÀÖÀ½
+/// MSG_WAITALLì€ ì´ë¯¸ winsock2.hì— ì •ì˜ë˜ì–´ ìˆìŒ
 #endif
 
-/// 3D °ø°£»óÀÇ ÇÑ Á¡À» ³ªÅ¸³»´Â ±¸Á¶Ã¼
+/// 3D ê³µê°„ìƒì˜ í•œ ì ì„ ë‚˜íƒ€ë‚´ëŠ” êµ¬ì¡°ì²´
 struct Point3D {
-    float x, y, z;  /// x, y, z ÁÂÇ¥
+    float x, y, z;  /// x, y, z ì¢Œí‘œ
 
-    /// ±âº» »ı¼ºÀÚ (¿øÁ¡À¸·Î ÃÊ±âÈ­)
+    /// ê¸°ë³¸ ìƒì„±ì (ì›ì ìœ¼ë¡œ ì´ˆê¸°í™”)
     Point3D(float x = 0, float y = 0, float z = 0) : x(x), y(y), z(z) {}
 };
 
-/// Point Cloud µ¥ÀÌÅÍ¸¦ Ã»Å© ´ÜÀ§·Î °ü¸®ÇÏ´Â ±¸Á¶Ã¼
-/// ºĞ»ê Ã³¸®¸¦ À§ÇØ ÀüÃ¼ µ¥ÀÌÅÍ¸¦ ÀÛÀº ´ÜÀ§·Î ³ª´« °Í
+/// Point Cloud ë°ì´í„°ë¥¼ ì²­í¬ ë‹¨ìœ„ë¡œ ê´€ë¦¬í•˜ëŠ” êµ¬ì¡°ì²´
+/// ë¶„ì‚° ì²˜ë¦¬ë¥¼ ìœ„í•´ ì „ì²´ ë°ì´í„°ë¥¼ ì‘ì€ ë‹¨ìœ„ë¡œ ë‚˜ëˆˆ ê²ƒ
 struct PointCloudChunk {
-    int chunk_id;                    /// Ã»Å©ÀÇ °íÀ¯ ½Äº°ÀÚ
-    std::vector<Point3D> points;     /// ÇØ´ç Ã»Å©¿¡ Æ÷ÇÔµÈ Á¡µé
+    int chunk_id;                    /// ì²­í¬ì˜ ê³ ìœ  ì‹ë³„ì
+    std::vector<Point3D> points;     /// í•´ë‹¹ ì²­í¬ì— í¬í•¨ëœ ì ë“¤
 
-    /// Ã»Å© µ¥ÀÌÅÍ¸¦ ¹®ÀÚ¿­·Î Á÷·ÄÈ­
-    /// ³×Æ®¿öÅ© Àü¼ÛÀ» À§ÇØ ¹ÙÀÌ³Ê¸® µ¥ÀÌÅÍ¸¦ ÅØ½ºÆ®·Î º¯È¯
+    /// ì²­í¬ ë°ì´í„°ë¥¼ ë¬¸ìì—´ë¡œ ì§ë ¬í™”
+    /// ë„¤íŠ¸ì›Œí¬ ì „ì†¡ì„ ìœ„í•´ ë°”ì´ë„ˆë¦¬ ë°ì´í„°ë¥¼ í…ìŠ¤íŠ¸ë¡œ ë³€í™˜
     std::string serialize() const {
         std::stringstream ss;
         ss << chunk_id << " " << points.size() << " ";
@@ -95,15 +95,15 @@ struct PointCloudChunk {
         return ss.str();
     }
 
-    /// ¹®ÀÚ¿­¿¡¼­ Ã»Å© µ¥ÀÌÅÍ·Î ¿ªÁ÷·ÄÈ­
-    /// ³×Æ®¿öÅ©¿¡¼­ ¹ŞÀº ÅØ½ºÆ® µ¥ÀÌÅÍ¸¦ °´Ã¼·Î º¹¿ø
+    /// ë¬¸ìì—´ì—ì„œ ì²­í¬ ë°ì´í„°ë¡œ ì—­ì§ë ¬í™”
+    /// ë„¤íŠ¸ì›Œí¬ì—ì„œ ë°›ì€ í…ìŠ¤íŠ¸ ë°ì´í„°ë¥¼ ê°ì²´ë¡œ ë³µì›
     static PointCloudChunk deserialize(const std::string& data) {
         PointCloudChunk chunk;
         std::stringstream ss(data);
         size_t size;
         ss >> chunk.chunk_id >> size;
 
-        chunk.points.reserve(size);  /// ¸Ş¸ğ¸® È¿À²¼ºÀ» À§ÇÑ »çÀü ÇÒ´ç
+        chunk.points.reserve(size);  /// ë©”ëª¨ë¦¬ íš¨ìœ¨ì„±ì„ ìœ„í•œ ì‚¬ì „ í• ë‹¹
         for (size_t i = 0; i < size; ++i) {
             Point3D p;
             ss >> p.x >> p.y >> p.z;
@@ -113,20 +113,20 @@ struct PointCloudChunk {
     }
 };
 
-/// Ã»Å© Ã³¸® °á°ú¸¦ ´ã´Â ±¸Á¶Ã¼
+/// ì²­í¬ ì²˜ë¦¬ ê²°ê³¼ë¥¼ ë‹´ëŠ” êµ¬ì¡°ì²´
 struct ProcessResult {
-    int chunk_id;           /// Ã³¸®µÈ Ã»Å©ÀÇ ID
-    float avg_distance;     /// ¿øÁ¡À¸·ÎºÎÅÍÀÇ Æò±Õ °Å¸®
-    int point_count;        /// Ã³¸®µÈ Á¡ÀÇ °³¼ö
+    int chunk_id;           /// ì²˜ë¦¬ëœ ì²­í¬ì˜ ID
+    float avg_distance;     /// ì›ì ìœ¼ë¡œë¶€í„°ì˜ í‰ê·  ê±°ë¦¬
+    int point_count;        /// ì²˜ë¦¬ëœ ì ì˜ ê°œìˆ˜
 
-    /// °á°ú¸¦ ¹®ÀÚ¿­·Î Á÷·ÄÈ­
+    /// ê²°ê³¼ë¥¼ ë¬¸ìì—´ë¡œ ì§ë ¬í™”
     std::string serialize() const {
         std::stringstream ss;
         ss << chunk_id << " " << avg_distance << " " << point_count;
         return ss.str();
     }
 
-    /// ¹®ÀÚ¿­¿¡¼­ °á°ú °´Ã¼·Î ¿ªÁ÷·ÄÈ­
+    /// ë¬¸ìì—´ì—ì„œ ê²°ê³¼ ê°ì²´ë¡œ ì—­ì§ë ¬í™”
     static ProcessResult deserialize(const std::string& data) {
         ProcessResult result;
         std::stringstream ss(data);
@@ -135,8 +135,8 @@ struct ProcessResult {
     }
 };
 
-/// Windows Winsock ÃÊ±âÈ­¸¦ RAII ÆĞÅÏÀ¸·Î °ü¸®ÇÏ´Â Å¬·¡½º
-/// ÇÁ·Î±×·¥ ½ÃÀÛ ½Ã ÀÚµ¿ ÃÊ±âÈ­, Á¾·á ½Ã ÀÚµ¿ Á¤¸®
+/// Windows Winsock ì´ˆê¸°í™”ë¥¼ RAII íŒ¨í„´ìœ¼ë¡œ ê´€ë¦¬í•˜ëŠ” í´ë˜ìŠ¤
+/// í”„ë¡œê·¸ë¨ ì‹œì‘ ì‹œ ìë™ ì´ˆê¸°í™”, ì¢…ë£Œ ì‹œ ìë™ ì •ë¦¬
 class WinsockInitializer {
 public:
     WinsockInitializer() {
@@ -151,7 +151,7 @@ public:
             initialized = true;
         }
 #else
-        /// Linux¿¡¼­´Â º°µµ ÃÊ±âÈ­ ºÒÇÊ¿ä
+        /// Linuxì—ì„œëŠ” ë³„ë„ ì´ˆê¸°í™” ë¶ˆí•„ìš”
         initialized = true;
 #endif
     }
@@ -170,21 +170,21 @@ private:
     bool initialized;
 };
 
-/// ³×Æ®¿öÅ© Åë½ÅÀ» À§ÇÑ À¯Æ¿¸®Æ¼ Å¬·¡½º
-/// TCP ¼ÒÄÏÀ» ÅëÇÑ ¾ÈÀüÇÑ µ¥ÀÌÅÍ ¼Û¼ö½Å ±â´É Á¦°ø
+/// ë„¤íŠ¸ì›Œí¬ í†µì‹ ì„ ìœ„í•œ ìœ í‹¸ë¦¬í‹° í´ë˜ìŠ¤
+/// TCP ì†Œì¼“ì„ í†µí•œ ì•ˆì „í•œ ë°ì´í„° ì†¡ìˆ˜ì‹  ê¸°ëŠ¥ ì œê³µ
 class NetworkUtils {
 public:
-    /// ¼ÒÄÏÀ» ÅëÇØ µ¥ÀÌÅÍ¸¦ ¾ÈÀüÇÏ°Ô Àü¼Û
-    /// ¸ÕÀú µ¥ÀÌÅÍ Å©±â¸¦ º¸³½ ÈÄ ½ÇÁ¦ µ¥ÀÌÅÍ Àü¼Û (ÇÁ·ÎÅäÄİ)
+    /// ì†Œì¼“ì„ í†µí•´ ë°ì´í„°ë¥¼ ì•ˆì „í•˜ê²Œ ì „ì†¡
+    /// ë¨¼ì € ë°ì´í„° í¬ê¸°ë¥¼ ë³´ë‚¸ í›„ ì‹¤ì œ ë°ì´í„° ì „ì†¡ (í”„ë¡œí† ì½œ)
     static bool sendData(SOCKET socket, const std::string& data) {
         uint32_t size = static_cast<uint32_t>(data.length());
 
-        /// Å©±â Àü¼Û (4¹ÙÀÌÆ® °íÁ¤)
+        /// í¬ê¸° ì „ì†¡ (4ë°”ì´íŠ¸ ê³ ì •)
         if (send(socket, reinterpret_cast<const char*>(&size), sizeof(size), 0) != sizeof(size)) {
             return false;
         }
 
-        /// µ¥ÀÌÅÍ Àü¼Û (ºÎºĞ Àü¼Û °¡´É¼ºÀ» °í·ÁÇÑ ·çÇÁ)
+        /// ë°ì´í„° ì „ì†¡ (ë¶€ë¶„ ì „ì†¡ ê°€ëŠ¥ì„±ì„ ê³ ë ¤í•œ ë£¨í”„)
         const char* buffer = data.c_str();
         int totalSent = 0;
         int dataSize = static_cast<int>(size);
@@ -199,18 +199,18 @@ public:
         return true;
     }
 
-    /// ¼ÒÄÏ¿¡¼­ µ¥ÀÌÅÍ¸¦ ¾ÈÀüÇÏ°Ô ¼ö½Å
-    /// ¸ÕÀú µ¥ÀÌÅÍ Å©±â¸¦ ¹ŞÀº ÈÄ ÇØ´ç Å©±â¸¸Å­ µ¥ÀÌÅÍ ¼ö½Å
+    /// ì†Œì¼“ì—ì„œ ë°ì´í„°ë¥¼ ì•ˆì „í•˜ê²Œ ìˆ˜ì‹ 
+    /// ë¨¼ì € ë°ì´í„° í¬ê¸°ë¥¼ ë°›ì€ í›„ í•´ë‹¹ í¬ê¸°ë§Œí¼ ë°ì´í„° ìˆ˜ì‹ 
     static std::string receiveData(SOCKET socket) {
         uint32_t size;
 
-        /// Å©±â ¼ö½Å (4¹ÙÀÌÆ® °íÁ¤)
+        /// í¬ê¸° ìˆ˜ì‹  (4ë°”ì´íŠ¸ ê³ ì •)
         int received = recv(socket, reinterpret_cast<char*>(&size), sizeof(size), 0);
         if (received != sizeof(size)) {
             return "";
         }
 
-        /// µ¥ÀÌÅÍ ¼ö½Å (ºÎºĞ ¼ö½Å °¡´É¼ºÀ» °í·ÁÇÑ ·çÇÁ)
+        /// ë°ì´í„° ìˆ˜ì‹  (ë¶€ë¶„ ìˆ˜ì‹  ê°€ëŠ¥ì„±ì„ ê³ ë ¤í•œ ë£¨í”„)
         std::string data(size, '\0');
         int totalReceived = 0;
         int dataSize = static_cast<int>(size);
@@ -226,45 +226,45 @@ public:
         return data;
     }
 
-    /// ¿öÄ¿¿¡°Ô ÀÛ¾÷ Á¾·á ½ÅÈ£ Àü¼Û
+    /// ì›Œì»¤ì—ê²Œ ì‘ì—… ì¢…ë£Œ ì‹ í˜¸ ì „ì†¡
     static bool sendTerminationSignal(SOCKET socket) {
         std::string terminationSignal = "TERMINATE";
         return sendData(socket, terminationSignal);
     }
 
-    /// ¼ö½ÅÇÑ µ¥ÀÌÅÍ°¡ Á¾·á ½ÅÈ£ÀÎÁö È®ÀÎ
+    /// ìˆ˜ì‹ í•œ ë°ì´í„°ê°€ ì¢…ë£Œ ì‹ í˜¸ì¸ì§€ í™•ì¸
     static bool isTerminationSignal(const std::string& data) {
         return data == "TERMINATE";
     }
 };
 
-/// Master ¼­¹ö Å¬·¡½º
-/// Point Cloud µ¥ÀÌÅÍ¸¦ »ı¼ºÇÏ°í ¿öÄ¿µé¿¡°Ô ÀÛ¾÷À» ºĞ¹è
+/// Master ì„œë²„ í´ë˜ìŠ¤
+/// Point Cloud ë°ì´í„°ë¥¼ ìƒì„±í•˜ê³  ì›Œì»¤ë“¤ì—ê²Œ ì‘ì—…ì„ ë¶„ë°°
 class MasterServer {
 private:
-    std::vector<PointCloudChunk> chunks;        /// Ã³¸®ÇÒ Ã»Å©µé
-    std::vector<ProcessResult> results;         /// Ã³¸® °á°úµé
-    std::atomic<int> chunk_index;               /// ´ÙÀ½ ÇÒ´çÇÒ Ã»Å© ÀÎµ¦½º (¿øÀÚÀû ¿¬»ê)
-    std::mutex results_mutex;                   /// °á°ú º¤ÅÍ Á¢±Ù µ¿±âÈ­
-    int port;                                   /// ¼­¹ö Æ÷Æ® ¹øÈ£
-    std::atomic<bool> all_chunks_processed;     /// ¸ğµç Ã»Å© Ã³¸® ¿Ï·á ÇÃ·¡±×
+    std::vector<PointCloudChunk> chunks;        /// ì²˜ë¦¬í•  ì²­í¬ë“¤
+    std::vector<ProcessResult> results;         /// ì²˜ë¦¬ ê²°ê³¼ë“¤
+    std::atomic<int> chunk_index;               /// ë‹¤ìŒ í• ë‹¹í•  ì²­í¬ ì¸ë±ìŠ¤ (ì›ìì  ì—°ì‚°)
+    std::mutex results_mutex;                   /// ê²°ê³¼ ë²¡í„° ì ‘ê·¼ ë™ê¸°í™”
+    int port;                                   /// ì„œë²„ í¬íŠ¸ ë²ˆí˜¸
+    std::atomic<bool> all_chunks_processed;     /// ëª¨ë“  ì²­í¬ ì²˜ë¦¬ ì™„ë£Œ í”Œë˜ê·¸
 
 public:
     MasterServer(int p) : port(p), chunk_index(0), all_chunks_processed(false) {}
 
-    /// Å×½ºÆ®¿ë »ùÇÃ Point Cloud µ¥ÀÌÅÍ »ı¼º
-    /// ½ÇÁ¦ È¯°æ¿¡¼­´Â ÆÄÀÏ¿¡¼­ ·ÎµåÇÏ°Å³ª ¼¾¼­¿¡¼­ ÀÔ·Â¹ŞÀ» ¼ö ÀÖÀ½
+    /// í…ŒìŠ¤íŠ¸ìš© ìƒ˜í”Œ Point Cloud ë°ì´í„° ìƒì„±
+    /// ì‹¤ì œ í™˜ê²½ì—ì„œëŠ” íŒŒì¼ì—ì„œ ë¡œë“œí•˜ê±°ë‚˜ ì„¼ì„œì—ì„œ ì…ë ¥ë°›ì„ ìˆ˜ ìˆìŒ
     void generateSampleData() {
         std::random_device rd;
         std::mt19937 gen(rd());
         std::uniform_real_distribution<float> dis(-100.0f, 100.0f);
 
-        /// 10°³ÀÇ Ã»Å©·Î ºĞÇÒµÈ »ùÇÃ Point Cloud »ı¼º
+        /// 10ê°œì˜ ì²­í¬ë¡œ ë¶„í• ëœ ìƒ˜í”Œ Point Cloud ìƒì„±
         for (int chunk_id = 0; chunk_id < 10; ++chunk_id) {
             PointCloudChunk chunk;
             chunk.chunk_id = chunk_id;
 
-            /// °¢ Ã»Å©¸¶´Ù 1000°³ÀÇ Æ÷ÀÎÆ® »ı¼º
+            /// ê° ì²­í¬ë§ˆë‹¤ 1000ê°œì˜ í¬ì¸íŠ¸ ìƒì„±
             for (int i = 0; i < 1000; ++i) {
                 chunk.points.emplace_back(dis(gen), dis(gen), dis(gen));
             }
@@ -274,35 +274,35 @@ public:
             << chunks.size() * 1000 << L" points\n";
     }
 
-    /// Master ¼­¹ö ½ÃÀÛ
-    /// TCP ¼­¹ö¸¦ ½ÃÀÛÇÏ°í ¿öÄ¿µéÀÇ ¿¬°áÀ» Ã³¸®
+    /// Master ì„œë²„ ì‹œì‘
+    /// TCP ì„œë²„ë¥¼ ì‹œì‘í•˜ê³  ì›Œì»¤ë“¤ì˜ ì—°ê²°ì„ ì²˜ë¦¬
     void start() {
-        /// TCP ¼ÒÄÏ »ı¼º
+        /// TCP ì†Œì¼“ ìƒì„±
         SOCKET server_sock = socket(AF_INET, SOCK_STREAM, 0);
         if (server_sock == INVALID_SOCKET) {
             std::wcerr << L"Socket creation failed\n";
             return;
         }
 
-        /// SO_REUSEADDR ¼³Á¤À¸·Î ÁÖ¼Ò Àç»ç¿ë Çã¿ë
+        /// SO_REUSEADDR ì„¤ì •ìœ¼ë¡œ ì£¼ì†Œ ì¬ì‚¬ìš© í—ˆìš©
         int opt = 1;
         setsockopt(server_sock, SOL_SOCKET, SO_REUSEADDR,
             reinterpret_cast<const char*>(&opt), sizeof(opt));
 
-        /// ¼­¹ö ÁÖ¼Ò ¼³Á¤
+        /// ì„œë²„ ì£¼ì†Œ ì„¤ì •
         sockaddr_in addr{};
         addr.sin_family = AF_INET;
-        addr.sin_addr.s_addr = INADDR_ANY;  /// ¸ğµç ÀÎÅÍÆäÀÌ½º¿¡¼­ ¼ö½Å
+        addr.sin_addr.s_addr = INADDR_ANY;  /// ëª¨ë“  ì¸í„°í˜ì´ìŠ¤ì—ì„œ ìˆ˜ì‹ 
         addr.sin_port = htons(port);
 
-        /// ¼ÒÄÏÀ» ÁÖ¼Ò¿¡ ¹ÙÀÎµù
+        /// ì†Œì¼“ì„ ì£¼ì†Œì— ë°”ì¸ë”©
         if (bind(server_sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == SOCKET_ERROR) {
             std::wcerr << L"Bind failed\n";
             close(server_sock);
             return;
         }
 
-        /// ¿¬°á ´ë±â »óÅÂ·Î ÀüÈ¯
+        /// ì—°ê²° ëŒ€ê¸° ìƒíƒœë¡œ ì „í™˜
         if (listen(server_sock, 10) == SOCKET_ERROR) {
             std::wcerr << L"Listen failed\n";
             close(server_sock);
@@ -311,35 +311,35 @@ public:
 
         std::wcout << L"Master server listening on port " << port << L"\n";
 
-        /// ¸ğµç Ã»Å©°¡ Ã³¸®µÉ ¶§±îÁö ¿öÄ¿ ¿¬°á Ã³¸®
+        /// ëª¨ë“  ì²­í¬ê°€ ì²˜ë¦¬ë  ë•Œê¹Œì§€ ì›Œì»¤ ì—°ê²° ì²˜ë¦¬
         while (!all_chunks_processed.load()) {
             sockaddr_in client_addr{};
             socklen_t client_len = sizeof(client_addr);
 
-            /// ¿öÄ¿ÀÇ ¿¬°á ¼ö¶ô
+            /// ì›Œì»¤ì˜ ì—°ê²° ìˆ˜ë½
             SOCKET client_sock = accept(server_sock, reinterpret_cast<sockaddr*>(&client_addr), &client_len);
 
             if (client_sock == INVALID_SOCKET) continue;
 
-            /// ¿¬°áµÈ ¿öÄ¿ÀÇ IP ÁÖ¼Ò Ãâ·Â
+            /// ì—°ê²°ëœ ì›Œì»¤ì˜ IP ì£¼ì†Œ ì¶œë ¥
             char ipStr[INET_ADDRSTRLEN];
             inet_ntop(AF_INET, &client_addr.sin_addr, ipStr, INET_ADDRSTRLEN);
             std::wcout << L"Worker connected: " << ipStr << L"\n";
 
-            /// Ã³¸®ÇÒ Ã»Å©°¡ ³²¾ÆÀÖ´ÂÁö È®ÀÎ (¿øÀÚÀû ¿¬»ê)
+            /// ì²˜ë¦¬í•  ì²­í¬ê°€ ë‚¨ì•„ìˆëŠ”ì§€ í™•ì¸ (ì›ìì  ì—°ì‚°)
             int current_chunk = chunk_index.fetch_add(1);
             if (current_chunk < static_cast<int>(chunks.size())) {
-                /// Ã»Å© Àü¼Û
+                /// ì²­í¬ ì „ì†¡
                 std::string chunk_data = chunks[current_chunk].serialize();
                 if (NetworkUtils::sendData(client_sock, chunk_data)) {
                     std::wcout << L"Sent chunk " << current_chunk << L" to worker\n";
 
-                    /// °á°ú ¼ö½Å
+                    /// ê²°ê³¼ ìˆ˜ì‹ 
                     std::string result_data = NetworkUtils::receiveData(client_sock);
                     if (!result_data.empty()) {
                         ProcessResult result = ProcessResult::deserialize(result_data);
 
-                        /// °á°ú ÀúÀå (½º·¹µå ¾ÈÀü)
+                        /// ê²°ê³¼ ì €ì¥ (ìŠ¤ë ˆë“œ ì•ˆì „)
                         {
                             std::lock_guard<std::mutex> lock(results_mutex);
                             results.push_back(result);
@@ -347,7 +347,7 @@ public:
                                 << L": avg_distance=" << result.avg_distance
                                 << L", points=" << result.point_count << L"\n";
 
-                            /// ¸ğµç Ã»Å©°¡ Ã³¸®µÇ¾ú´ÂÁö È®ÀÎ
+                            /// ëª¨ë“  ì²­í¬ê°€ ì²˜ë¦¬ë˜ì—ˆëŠ”ì§€ í™•ì¸
                             if (results.size() == chunks.size()) {
                                 all_chunks_processed.store(true);
                                 std::wcout << L"All chunks processed!\n";
@@ -357,7 +357,7 @@ public:
                 }
             }
             else {
-                /// ´õ ÀÌ»ó Ã³¸®ÇÒ Ã»Å©°¡ ¾øÀ½À» ¾Ë¸²
+                /// ë” ì´ìƒ ì²˜ë¦¬í•  ì²­í¬ê°€ ì—†ìŒì„ ì•Œë¦¼
                 NetworkUtils::sendTerminationSignal(client_sock);
                 std::wcout << L"Sent termination signal to worker\n";
             }
@@ -370,13 +370,13 @@ public:
     }
 
 private:
-    /// ¸ğµç Ã³¸®°¡ ¿Ï·áµÈ ÈÄ ÃÖÁ¾ °á°ú Ãâ·Â
+    /// ëª¨ë“  ì²˜ë¦¬ê°€ ì™„ë£Œëœ í›„ ìµœì¢… ê²°ê³¼ ì¶œë ¥
     void printFinalResults() {
         std::wcout << L"\n=== Final Results ===\n";
         float total_avg = 0.0f;
         int total_points = 0;
 
-        /// °¢ Ã»Å©º° °á°ú Ãâ·Â
+        /// ê° ì²­í¬ë³„ ê²°ê³¼ ì¶œë ¥
         for (const auto& result : results) {
             total_avg += result.avg_distance;
             total_points += result.point_count;
@@ -385,7 +385,7 @@ private:
                 << result.avg_distance << L"\n";
         }
 
-        /// ÀüÃ¼ Åë°è Ãâ·Â
+        /// ì „ì²´ í†µê³„ ì¶œë ¥
         if (!results.empty()) {
             std::wcout << L"Overall average distance: " << total_avg / results.size() << L"\n";
             std::wcout << L"Total points processed: " << total_points << L"\n";
@@ -393,50 +393,50 @@ private:
     }
 };
 
-/// Worker Å¬¶óÀÌ¾ğÆ® Å¬·¡½º
-/// Master¿¡ ¿¬°áÇÏ¿© Point Cloud Ã»Å©¸¦ Ã³¸®
+/// Worker í´ë¼ì´ì–¸íŠ¸ í´ë˜ìŠ¤
+/// Masterì— ì—°ê²°í•˜ì—¬ Point Cloud ì²­í¬ë¥¼ ì²˜ë¦¬
 class WorkerClient {
 private:
-    std::string master_ip;      /// Master ¼­¹öÀÇ IP ÁÖ¼Ò
-    int master_port;            /// Master ¼­¹öÀÇ Æ÷Æ® ¹øÈ£
+    std::string master_ip;      /// Master ì„œë²„ì˜ IP ì£¼ì†Œ
+    int master_port;            /// Master ì„œë²„ì˜ í¬íŠ¸ ë²ˆí˜¸
 
 public:
     WorkerClient(const std::string& ip, int port) : master_ip(ip), master_port(port) {}
 
-    /// Worker ½ÃÀÛ
-    /// MasterÀÇ ¸ğµç µ¥ÀÌÅÍ°¡ Ã³¸®µÉ ¶§±îÁö °è¼Ó ¿¬°áÇÏ¿© ÀÛ¾÷ ¼öÇà
+    /// Worker ì‹œì‘
+    /// Masterì˜ ëª¨ë“  ë°ì´í„°ê°€ ì²˜ë¦¬ë  ë•Œê¹Œì§€ ê³„ì† ì—°ê²°í•˜ì—¬ ì‘ì—… ìˆ˜í–‰
     void start() {
         std::wcout << L"Worker started. Connecting to master...\n";
 
-        /// MasterÀÇ ¸ğµç µ¥ÀÌÅÍ°¡ Ã³¸®µÉ ¶§±îÁö °è¼Ó ¿¬°á
+        /// Masterì˜ ëª¨ë“  ë°ì´í„°ê°€ ì²˜ë¦¬ë  ë•Œê¹Œì§€ ê³„ì† ì—°ê²°
         while (true) {
             if (!connectAndProcess()) {
                 std::wcout << L"Worker terminated.\n";
                 break;
             }
 
-            /// ´ÙÀ½ ¿¬°á Àü Àá½Ã ´ë±â (¼­¹ö ºÎÇÏ °¨¼Ò)
+            /// ë‹¤ìŒ ì—°ê²° ì „ ì ì‹œ ëŒ€ê¸° (ì„œë²„ ë¶€í•˜ ê°ì†Œ)
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
     }
 
 private:
-    /// Master¿¡ ¿¬°áÇÏ¿© ÇÑ ¹øÀÇ ÀÛ¾÷ Ã³¸®
-    /// ¼º°ø ½Ã true, Á¾·á ½ÅÈ£ ¼ö½Å ½Ã false ¹İÈ¯
+    /// Masterì— ì—°ê²°í•˜ì—¬ í•œ ë²ˆì˜ ì‘ì—… ì²˜ë¦¬
+    /// ì„±ê³µ ì‹œ true, ì¢…ë£Œ ì‹ í˜¸ ìˆ˜ì‹  ì‹œ false ë°˜í™˜
     bool connectAndProcess() {
-        /// TCP ¼ÒÄÏ »ı¼º
+        /// TCP ì†Œì¼“ ìƒì„±
         SOCKET sock = socket(AF_INET, SOCK_STREAM, 0);
         if (sock == INVALID_SOCKET) {
             std::wcerr << L"Socket creation failed\n";
             return false;
         }
 
-        /// Master ¼­¹ö ÁÖ¼Ò ¼³Á¤
+        /// Master ì„œë²„ ì£¼ì†Œ ì„¤ì •
         sockaddr_in addr{};
         addr.sin_family = AF_INET;
         addr.sin_port = htons(master_port);
 
-        /// IP ÁÖ¼Ò º¯È¯ ¹× °ËÁõ
+        /// IP ì£¼ì†Œ ë³€í™˜ ë° ê²€ì¦
         if (InetPtonA(AF_INET, master_ip.c_str(), &addr.sin_addr) != 1) {
             std::wcerr << L"Invalid IP address\n";
             close(sock);
@@ -449,14 +449,14 @@ private:
             return false;
         }
 
-        /// Master ¼­¹ö¿¡ ¿¬°á
+        /// Master ì„œë²„ì— ì—°ê²°
         if (::connect(sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == SOCKET_ERROR) {
             std::wcerr << L"Connection to master failed\n";
             close(sock);
             return false;
         }
 
-        /// Ã»Å© ¶Ç´Â Á¾·á ½ÅÈ£ ¼ö½Å
+        /// ì²­í¬ ë˜ëŠ” ì¢…ë£Œ ì‹ í˜¸ ìˆ˜ì‹ 
         std::string received_data = NetworkUtils::receiveData(sock);
         if (received_data.empty()) {
             std::wcerr << L"Failed to receive data from master\n";
@@ -464,47 +464,47 @@ private:
             return false;
         }
 
-        /// Á¾·á ½ÅÈ£ È®ÀÎ
+        /// ì¢…ë£Œ ì‹ í˜¸ í™•ì¸
         if (NetworkUtils::isTerminationSignal(received_data)) {
             std::wcout << L"Received termination signal from master\n";
             close(sock);
-            return false; // ¿öÄ¿ Á¾·á
+            return false; // ì›Œì»¤ ì¢…ë£Œ
         }
 
-        /// Ã»Å© µ¥ÀÌÅÍ Ã³¸®
+        /// ì²­í¬ ë°ì´í„° ì²˜ë¦¬
         PointCloudChunk chunk = PointCloudChunk::deserialize(received_data);
         std::wcout << L"Received chunk " << chunk.chunk_id
             << L" with " << chunk.points.size() << L" points\n";
 
-        /// Point Cloud Ã³¸® ¼öÇà
+        /// Point Cloud ì²˜ë¦¬ ìˆ˜í–‰
         ProcessResult result = processPointCloud(chunk);
 
-        /// °á°ú Àü¼Û
+        /// ê²°ê³¼ ì „ì†¡
         std::string result_data = result.serialize();
         NetworkUtils::sendData(sock, result_data);
         std::wcout << L"Sent processing result for chunk " << result.chunk_id << L"\n";
 
         close(sock);
-        return true; // °è¼Ó ½ÇÇà
+        return true; // ê³„ì† ì‹¤í–‰
     }
 
-    /// Point Cloud Ã»Å© Ã³¸® ÇÔ¼ö
-    /// °¢ Á¡ÀÇ ¿øÁ¡À¸·ÎºÎÅÍÀÇ °Å¸®¸¦ °è»êÇÏ¿© Æò±Õ ±¸ÇÔ
+    /// Point Cloud ì²­í¬ ì²˜ë¦¬ í•¨ìˆ˜
+    /// ê° ì ì˜ ì›ì ìœ¼ë¡œë¶€í„°ì˜ ê±°ë¦¬ë¥¼ ê³„ì‚°í•˜ì—¬ í‰ê·  êµ¬í•¨
     ProcessResult processPointCloud(const PointCloudChunk& chunk) {
         std::wcout << L"Processing chunk " << chunk.chunk_id << L"...\n";
 
-        /// ½Ã¹Ä·¹ÀÌ¼Ç: ¿øÁ¡À¸·ÎºÎÅÍÀÇ Æò±Õ °Å¸® °è»ê
+        /// ì‹œë®¬ë ˆì´ì…˜: ì›ì ìœ¼ë¡œë¶€í„°ì˜ í‰ê·  ê±°ë¦¬ ê³„ì‚°
         float total_distance = 0.0f;
         for (const auto& point : chunk.points) {
-            /// À¯Å¬¸®µå °Å¸® °è»ê (¡î(x©÷ + y©÷ + z©÷))
+            /// ìœ í´ë¦¬ë“œ ê±°ë¦¬ ê³„ì‚° (âˆš(xÂ² + yÂ² + zÂ²))
             float distance = std::sqrt(point.x * point.x + point.y * point.y + point.z * point.z);
             total_distance += distance;
         }
 
-        /// Ã³¸® ½Ã°£ ½Ã¹Ä·¹ÀÌ¼Ç (½ÇÁ¦ º¹ÀâÇÑ °è»ê ´ë½Å)
+        /// ì²˜ë¦¬ ì‹œê°„ ì‹œë®¬ë ˆì´ì…˜ (ì‹¤ì œ ë³µì¡í•œ ê³„ì‚° ëŒ€ì‹ )
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
-        /// °á°ú °´Ã¼ »ı¼º
+        /// ê²°ê³¼ ê°ì²´ ìƒì„±
         ProcessResult result;
         result.chunk_id = chunk.chunk_id;
         result.avg_distance = total_distance / chunk.points.size();
@@ -517,19 +517,19 @@ private:
     }
 };
 
-/// ÇÁ·Î±×·¥ ÁøÀÔÁ¡ (À¯´ÏÄÚµå Áö¿ø)
+/// í”„ë¡œê·¸ë¨ ì§„ì…ì  (ìœ ë‹ˆì½”ë“œ ì§€ì›)
 int wmain(int argc, wchar_t* argv[]) {
-    /// ÄÜ¼Ö Ãâ·ÂÀ» À¯´ÏÄÚµå·Î ¼³Á¤ (À©µµ¿ì Àü¿ë)
+    /// ì½˜ì†” ì¶œë ¥ì„ ìœ ë‹ˆì½”ë“œë¡œ ì„¤ì • (ìœˆë„ìš° ì „ìš©)
     auto retval = _setmode(_fileno(stdout), _O_U16TEXT);
 
-    /// Winsock ÃÊ±âÈ­ (À©µµ¿ì Àü¿ë)
+    /// Winsock ì´ˆê¸°í™” (ìœˆë„ìš° ì „ìš©)
     WSADATA wsaData;
     if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
-        std::wcerr << L"WSAStartup ½ÇÆĞ\n";
+        std::wcerr << L"WSAStartup ì‹¤íŒ¨\n";
         return 1;
     }
 
-    /// ¸í·ÉÇà ÀÎ¼ö °ËÁõ
+    /// ëª…ë ¹í–‰ ì¸ìˆ˜ ê²€ì¦
     if (argc < 2) {
         std::wcout << L"Usage:\n";
         std::wcout << L"  Master mode: " << argv[0] << L" master [port]\n";
@@ -539,26 +539,26 @@ int wmain(int argc, wchar_t* argv[]) {
 
     std::wstring mode = argv[1];
 
-    /// Master ¸ğµå ½ÇÇà
+    /// Master ëª¨ë“œ ì‹¤í–‰
     if (mode == L"master") {
         int port = (argc >= 3) ? _wtoi(argv[2]) : 8080;
         MasterServer server(port);
-        server.generateSampleData();  /// Å×½ºÆ® µ¥ÀÌÅÍ »ı¼º
-        server.start();               /// ¼­¹ö ½ÃÀÛ
+        server.generateSampleData();  /// í…ŒìŠ¤íŠ¸ ë°ì´í„° ìƒì„±
+        server.start();               /// ì„œë²„ ì‹œì‘
     }
-    /// Worker ¸ğµå ½ÇÇà
+    /// Worker ëª¨ë“œ ì‹¤í–‰
     else if (mode == L"worker") {
         std::wstring master_ip = (argc >= 3) ? argv[2] : L"127.0.0.1";
         int master_port = (argc >= 4) ? _wtoi(argv[3]) : 8080;
         WorkerClient worker(wstring_to_utf8(master_ip), master_port);
-        worker.start();  /// ¿öÄ¿ ½ÃÀÛ
+        worker.start();  /// ì›Œì»¤ ì‹œì‘
     }
     else {
         std::wcerr << L"Invalid mode. Use 'master' or 'worker'\n\n";
         return 1;
     }
 
-    /// Winsock Á¤¸® (À©µµ¿ì Àü¿ë)
+    /// Winsock ì •ë¦¬ (ìœˆë„ìš° ì „ìš©)
     WSACleanup();
     return 0;
 }

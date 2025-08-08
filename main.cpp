@@ -633,6 +633,9 @@ private:
     std::unique_ptr<RemoteWorkerManager> remote_manager;    /// 원격 워커 관리자
     std::wstring config_file;                                /// 설정 파일 경로
 
+    std::vector<std::vector<std::vector<Face>>> allFileMeshes;
+    std::vector<int> allFileBimId;
+
 public:
     MasterServer(int p, const std::wstring& config = L"workers.conf")
         : port(p), chunk_index(0), all_chunks_processed(false), config_file(config) {
@@ -771,13 +774,175 @@ public:
         }
     }
 
+    void startGltf() {
+        /// 원격 워커 설정 로드 및 실행
+        ConfigManager::setupRemoteWorkers(config_file);
+
+        /// TCP 소켓 생성
+        SOCKET server_sock = socket(AF_INET, SOCK_STREAM, 0);
+        if (server_sock == INVALID_SOCKET) {
+            std::wcerr << L"Socket creation failed\n";
+            return;
+        }
+
+        /// SO_REUSEADDR 설정으로 주소 재사용 허용
+        int opt = 1;
+        setsockopt(server_sock, SOL_SOCKET, SO_REUSEADDR,
+            reinterpret_cast<const char*>(&opt), sizeof(opt));
+
+        /// 서버 주소 설정
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_addr.s_addr = INADDR_ANY;  /// 모든 인터페이스에서 수신
+        addr.sin_port = htons(port);
+
+        /// 소켓을 주소에 바인딩
+        if (bind(server_sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == SOCKET_ERROR) {
+            std::wcerr << L"Bind failed\n";
+            close(server_sock);
+            return;
+        }
+
+        /// 연결 대기 상태로 전환
+        if (listen(server_sock, 10) == SOCKET_ERROR) {
+            std::wcerr << L"Listen failed\n";
+            close(server_sock);
+            return;
+        }
+
+        std::wcout << L"Master server listening on port " << port << L"\n";
+
+        size_t numProcessedMeshes = 0;
+        size_t numAllMeshes = 0;
+        for (const auto meshes : this->allFileMeshes) {
+            numAllMeshes += meshes.size();
+        }
+
+        while (numProcessedMeshes < numAllMeshes) {
+            sockaddr_in client_addr{};
+            socklen_t client_len = sizeof(client_addr);
+
+            /// 워커의 연결 수락
+            SOCKET client_sock = accept(server_sock, reinterpret_cast<sockaddr*>(&client_addr), &client_len);
+
+            if (client_sock == INVALID_SOCKET) continue;
+
+            /// 연결된 워커의 IP 주소 출력
+            char ipStr[INET_ADDRSTRLEN];
+            inet_ntop(AF_INET, &client_addr.sin_addr, ipStr, INET_ADDRSTRLEN);
+            std::wcout << L"Worker connected: " << ipStr << L"\n";
+
+            /// 처리할 청크가 남아있는지 확인 (원자적 연산: 다른 스레드가 동시에 접속해도 연산이 중단되지 않고 한 번에 완료, data race condition 회피)
+            /// current_chunk에 마지막 chunk_index를 대입하고, cuunk_index에 '1'을 추가
+            int current_chunk = chunk_index.fetch_add(1);
+            if (current_chunk < static_cast<int>(numAllMeshes)) {
+                /// 청크 전송
+                std::string chunk_data = chunks[current_chunk].serialize();
+                if (NetworkUtils::sendData(client_sock, chunk_data)) {
+                    std::wcout << L"Sent chunk " << current_chunk << L" to worker\n";
+
+                    /// 결과 수신
+                    std::string result_data = NetworkUtils::receiveData(client_sock);
+                    if (!result_data.empty()) {
+                        ProcessResult result = ProcessResult::deserialize(result_data);
+
+                        /// 결과 저장 (스레드 안전)
+                        {
+                            std::lock_guard<std::mutex> lock(results_mutex);
+                            results.push_back(result);
+                            std::wcout << L"Received result for chunk " << result.chunk_id
+                                << L": avg_distance=" << result.avg_distance
+                                << L", points=" << result.point_count << L"\n";
+
+                            /// 모든 청크가 처리되었는지 확인
+                            if (results.size() == chunks.size()) {
+                                all_chunks_processed.store(true);
+                                std::wcout << L"All chunks processed!\n";
+                            }
+                        }
+                    }
+                }
+            }
+            else {
+                /// 더 이상 처리할 청크가 없음을 알림
+                NetworkUtils::sendTerminationSignal(client_sock);
+                std::wcout << L"Sent termination signal to worker\n";
+            }
+
+            ++numProcessedMeshes;
+
+            close(client_sock);
+        }
+
+        /// 모든 청크가 처리될 때까지 워커 연결 처리
+        while (!all_chunks_processed.load()) {
+            sockaddr_in client_addr{};
+            socklen_t client_len = sizeof(client_addr);
+
+            /// 워커의 연결 수락
+            SOCKET client_sock = accept(server_sock, reinterpret_cast<sockaddr*>(&client_addr), &client_len);
+
+            if (client_sock == INVALID_SOCKET) continue;
+
+            /// 연결된 워커의 IP 주소 출력
+            char ipStr[INET_ADDRSTRLEN];
+            inet_ntop(AF_INET, &client_addr.sin_addr, ipStr, INET_ADDRSTRLEN);
+            std::wcout << L"Worker connected: " << ipStr << L"\n";
+
+            /// 처리할 청크가 남아있는지 확인 (원자적 연산)
+            int current_chunk = chunk_index.fetch_add(1);
+            if (current_chunk < static_cast<int>(chunks.size())) {
+                /// 청크 전송
+                std::string chunk_data = chunks[current_chunk].serialize();
+                if (NetworkUtils::sendData(client_sock, chunk_data)) {
+                    std::wcout << L"Sent chunk " << current_chunk << L" to worker\n";
+
+                    /// 결과 수신
+                    std::string result_data = NetworkUtils::receiveData(client_sock);
+                    if (!result_data.empty()) {
+                        ProcessResult result = ProcessResult::deserialize(result_data);
+
+                        /// 결과 저장 (스레드 안전)
+                        {
+                            std::lock_guard<std::mutex> lock(results_mutex);
+                            results.push_back(result);
+                            std::wcout << L"Received result for chunk " << result.chunk_id
+                                << L": avg_distance=" << result.avg_distance
+                                << L", points=" << result.point_count << L"\n";
+
+                            /// 모든 청크가 처리되었는지 확인
+                            if (results.size() == chunks.size()) {
+                                all_chunks_processed.store(true);
+                                std::wcout << L"All chunks processed!\n";
+                            }
+                        }
+                    }
+                }
+            }
+            else {
+                /// 더 이상 처리할 청크가 없음을 알림
+                NetworkUtils::sendTerminationSignal(client_sock);
+                std::wcout << L"Sent termination signal to worker\n";
+            }
+
+            close(client_sock);
+        }
+
+        close(server_sock);
+        printFinalResults();
+
+        /// 원격 워커들 정리
+        if (remote_manager) {
+            std::wcout << L"Shutting down remote workers...\n";
+            remote_manager->stop();
+        }
+    }
+
     bool readInputFolder(const std::string& project_name,
         const std::string& bim_folder,
         const std::string& nodes2_folder,
         const bool is_offset_applied,
         const float* offset,
-        std::vector<std::vector<std::vector<Face>>>& allFileMeshes,
-        std::vector<int>& allFileBimId,
         const float unitConversion = FEET_TO_METER) {
 
 		auto split = [](const std::string& str, const char delimiter) {
@@ -802,6 +967,9 @@ public:
 
         size_t total_gltf_files = std::distance(fs::directory_iterator(input_path), fs::directory_iterator());
         int processed_gltf_files = 0;
+
+        allFileMeshes.clear();
+        allFileBimId.clear();
 
         std::string output_file_name = project_name + ".nodes2"; // binary file name
         auto full_path = output_path / output_file_name;
@@ -1192,7 +1360,12 @@ int wmain(int argc, wchar_t* argv[]) {
         std::wstring config_file = (argc >= 4) ? argv[3] : L"workers.conf";
 
         MasterServer server(port, config_file);
-        server.generateSampleData();  /// 테스트 데이터 생성
+        //server.generateSampleData();  /// 테스트 데이터 생성
+        const std::string glbFolder = "C:\\Users\\kiinb\\Downloads\\samsung_test\\glb2";
+        const std::string nodes2_folder = "C:\\Users\\kiinb\\Downloads\\samsung_test\\nodes2";
+        float offset[3] = { 1.0f, 1.0f, 1.0f };
+        const float unitConversion = FEET_TO_METER; /// set this value to config later
+        server.readInputFolder("samsung_test", glbFolder, nodes2_folder, false, offset, unitConversion);
         server.start();               /// 서버 시작 (원격 워커 자동 실행 포함)
     }
     /// Worker 모드 실행

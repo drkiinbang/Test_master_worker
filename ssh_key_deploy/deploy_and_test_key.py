@@ -24,6 +24,53 @@ JSON 예시:
 import argparse, json, os, posixpath, socket, sys, traceback, subprocess, stat
 import paramiko
 
+def _normalize_path(p):
+    if p is None: return None
+    p = str(p).strip().strip('"').strip("'")
+    p = os.path.expandvars(p)
+    p = os.path.expanduser(p)
+    return os.path.normpath(p)
+
+def _known_hosts_path() -> str:
+    return _normalize_path("~/.ssh/known_hosts")
+
+def _known_host_label(host: str, port: int) -> str:
+    """OpenSSH known_hosts 라벨 규칙: 기본포트(22)는 host, 그 외는 [host]:port"""
+    # IPv6, 콜론 포함 등은 대괄호로 감쌉니다.
+    needs_bracket = (":" in host)
+    if port == 22 and not needs_bracket:
+        return host
+    return f"[{host}]:{port}"
+
+def _ensure_known_hosts_entry(host: str, port: int, pkey) -> None:
+    """
+    Paramiko PKey(원격 서버 호스트키)를 OpenSSH known_hosts 라인으로 기록.
+    중복이면 건너뜀.
+    """
+    path = _known_hosts_path()
+    ssh_dir = os.path.dirname(path)
+    os.makedirs(ssh_dir, exist_ok=True)
+    label = _known_host_label(host, port)
+    line = f"{label} {pkey.get_name()} {pkey.get_base64()}"
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            content = f.read()
+    except FileNotFoundError:
+        content = ""
+
+    if line not in content:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+        # 권한 보정(유닉스 계열)
+        if os.name == "posix":
+            try: os.chmod(ssh_dir, 0o700)
+            except Exception: pass
+            try: os.chmod(path, 0o644)
+            except Exception: pass
+        print(f"[LOCAL] known_hosts 등록: {label} ({pkey.get_name()})")
+    else:
+        print(f"[LOCAL] known_hosts 이미 등록됨: {label}")
+
 # ---------------- GUI 유틸 ----------------
 def ask_password_masked(title: str, prompt: str):
     """가능하면 Tk 다이얼로그(별표 마스킹), 불가하면 콘솔 getpass로 폴백."""
@@ -249,6 +296,10 @@ def deploy_key_with_password(host, port, username, password, pubkey_path):
             ssh.connect(host, port=port, username=username, password=password,
                         look_for_keys=False, allow_agent=False,
                         timeout=15, banner_timeout=15, auth_timeout=15)
+            
+            server_key = ssh.get_transport().get_remote_server_key()
+            _ensure_known_hosts_entry(host, port, server_key)
+
         except paramiko.AuthenticationException as e:
             raise PasswordAuthError("비밀번호가 올바르지 않습니다.") from e
         except (paramiko.SSHException, socket.error) as e:
@@ -294,6 +345,10 @@ def test_key_login(host, port, username, privkey_path, passphrase=None):
         ssh.connect(host, port=port, username=username, pkey=pkey,
                     look_for_keys=False, allow_agent=False,
                     timeout=15, banner_timeout=15, auth_timeout=15)
+        
+        server_key = ssh.get_transport().get_remote_server_key()
+        _ensure_known_hosts_entry(host, port, server_key)
+
         platform = _detect_remote_platform(ssh)
         cmd = "echo OK:$(whoami) on $(hostname)" if platform == "posix" else \
               ("powershell -NoProfile -NonInteractive -Command "

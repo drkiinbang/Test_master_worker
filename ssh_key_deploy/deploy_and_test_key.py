@@ -2,17 +2,26 @@
 # -*- coding: utf-8 -*-
 
 """
-JSON에서 workers 목록을 읽어:
+workers_list.json 에서 workers 목록을 읽어:
 1) 개인키 무비번 접속 여부 확인
-2) 불가 시 GUI(별표 마스킹)로 비밀번호 입력 → 공개키 배포
+2) 불가 시 비밀번호 다이얼로그(별표 마스킹)로 입력받아 공개키 배포
+   - 공개키(.pub)가 없다면: 자동으로 키쌍 생성 후 배포
 3) 배포 후 개인키 접속 재검증
 4) 종료 시 성공/건너뜀/실패 요약 출력
 
 사용:
   python deploy_and_test_key.py --config workers_list.json
+JSON 예시:
+{
+  "default_pubkey_path": "~/.ssh/id_ed25519.pub",
+  "workers": [
+    { "host": "10.10.10.13", "port": 22, "username": "kiinbang" },
+    { "host": "10.10.10.24", "port": 22, "username": "kiinbang" }
+  ]
+}
 """
 
-import argparse, json, os, posixpath, socket, sys, traceback
+import argparse, json, os, posixpath, socket, sys, traceback, subprocess, stat
 import paramiko
 
 # ---------------- GUI 유틸 ----------------
@@ -126,12 +135,111 @@ def _append_key_if_missing(ssh, sftp, auth_keys, public_key_text):
         return True
     return False
 
+# -------- 로컬 키쌍 보장(없으면 생성) --------
+def _posix() -> bool:
+    return os.name == "posix"
+
+def _ensure_dir_and_perms(path_dir: str):
+    os.makedirs(path_dir, exist_ok=True)
+    if _posix():
+        os.chmod(path_dir, 0o700)
+
+def _fix_key_permissions(priv_path: str, pub_path: str):
+    if _posix():
+        try: os.chmod(priv_path, 0o600)
+        except Exception: pass
+        try: os.chmod(pub_path, 0o644)
+        except Exception: pass
+
+def _default_comment():
+    user = os.environ.get("USER") or os.environ.get("USERNAME") or "user"
+    host = socket.gethostname()
+    return f"{user}@{host}"
+
+def _ensure_local_keypair(pub_path: str, key_type: str = "ed25519", passphrase: str | None = None, comment: str | None = None):
+    """
+    pub_path가 가리키는 공개키가 없으면:
+      1) priv만 있으면 → ssh-keygen -y 로 pub 생성 (폴백: Paramiko로 생성)
+      2) 둘 다 없으면 → ssh-keygen 으로 키쌍 생성 (폴백: Paramiko RSA 3072)
+    return: (priv_path, pub_path, created_flag)  # created_flag: "none"|"pub_created"|"pair_created"
+    """
+    pub_path = os.path.expanduser(pub_path)
+    if not pub_path.endswith(".pub"):
+        raise ValueError("public key 경로는 .pub 확장자를 포함해야 합니다.")
+    priv_path = pub_path[:-4]
+
+    key_dir = os.path.dirname(priv_path) or os.path.expanduser("~/.ssh")
+    _ensure_dir_and_perms(key_dir)
+
+    priv_exists = os.path.exists(priv_path)
+    pub_exists  = os.path.exists(pub_path)
+
+    if priv_exists and pub_exists:
+        _fix_key_permissions(priv_path, pub_path)
+        return priv_path, pub_path, "none"
+
+    # pub만 없는 경우 → priv에서 pub 추출
+    if priv_exists and not pub_exists:
+        # 1) ssh-keygen -y 시도
+        try:
+            res = subprocess.run(
+                ["ssh-keygen", "-y", "-f", priv_path],
+                capture_output=True, text=True, check=False
+            )
+            if res.returncode == 0 and res.stdout.strip():
+                with open(pub_path, "w", encoding="utf-8") as f:
+                    line = res.stdout.strip()
+                    if comment := (comment or _default_comment()):
+                        if " " in line:
+                            # "type base64 [comment]" 형태일 수 있으니 comment 유무에 따라 보정
+                            parts = line.split()
+                            if len(parts) >= 2:
+                                line = f"{parts[0]} {parts[1]} {comment}"
+                    f.write(line + "\n")
+                _fix_key_permissions(priv_path, pub_path)
+                return priv_path, pub_path, "pub_created"
+        except FileNotFoundError:
+            pass  # ssh-keygen 없음 → 아래 폴백
+
+        # 2) Paramiko로 공개키 라인 구성 (RSA/ECDSA 가능)
+        try:
+            key = _load_private_key(priv_path, passphrase=None)
+            line = f"{key.get_name()} {key.get_base64()} {(comment or _default_comment())}"
+            with open(pub_path, "w", encoding="utf-8") as f:
+                f.write(line + "\n")
+            _fix_key_permissions(priv_path, pub_path)
+            return priv_path, pub_path, "pub_created"
+        except Exception as e:
+            raise RuntimeError(f"기존 개인키에서 공개키 생성 실패: {e}")
+
+    # 둘 다 없는 경우 → 키쌍 생성
+    # 1) ssh-keygen 시도 (ed25519 기본)
+    try:
+        args = ["ssh-keygen", "-t", key_type, "-f", priv_path, "-N", passphrase or "", "-C", comment or _default_comment()]
+        res = subprocess.run(args, capture_output=True, text=True, check=False)
+        if res.returncode == 0 and os.path.exists(priv_path) and os.path.exists(pub_path):
+            _fix_key_permissions(priv_path, pub_path)
+            return priv_path, pub_path, "pair_created"
+    except FileNotFoundError:
+        pass  # ssh-keygen 없음
+
+    # 2) 폴백: Paramiko RSA 3072 생성
+    key = paramiko.RSAKey.generate(3072)
+    key.write_private_key_file(priv_path)  # passphrase 미설정
+    line = f"{key.get_name()} {key.get_base64()} {(comment or _default_comment())}"
+    with open(pub_path, "w", encoding="utf-8") as f:
+        f.write(line + "\n")
+    _fix_key_permissions(priv_path, pub_path)
+    return priv_path, pub_path, "pair_created"
+
 # --------------- 배포/검증 ---------------
 def deploy_key_with_password(host, port, username, password, pubkey_path):
-    expanded_pub = os.path.expanduser(pubkey_path)
-    if not os.path.exists(expanded_pub):
-        raise FileNotFoundError(f"공개키 파일을 찾을 수 없습니다: {expanded_pub}")
-    with open(expanded_pub, "r", encoding="utf-8") as f:
+    # 공개키가 없으면 여기서 키쌍까지 만들어 둔다.
+    priv_path, pub_path, created = _ensure_local_keypair(pubkey_path)
+    if created != "none":
+        print(f"[LOCAL] 키 생성: {created} (priv: {priv_path}, pub: {pub_path})")
+
+    with open(pub_path, "r", encoding="utf-8") as f:
         public_key_text = f.read().strip()
 
     ssh = paramiko.SSHClient()
@@ -169,7 +277,7 @@ def deploy_key_with_password(host, port, username, password, pubkey_path):
             ssh.exec_command(f"chmod 700 '{ssh_dir}' && chmod 600 '{auth_keys}'")
 
         return {"platform": platform, "home": home_dir, "ssh_dir": ssh_dir,
-                "auth_keys": auth_keys, "changed": changed}
+                "auth_keys": auth_keys, "changed": changed, "priv_path": priv_path}
     finally:
         try: ssh.close()
         except Exception: pass
@@ -205,10 +313,14 @@ def _load_config(path):
         return json.load(f)
 
 def _resolve_pub_priv_paths(cfg, srv):
+    # pub 우선순위: 서버별(pubkey) → 전역(default_pubkey_path) → (하위호환) default_key_path
     pub = srv.get("pubkey") or cfg.get("default_pubkey_path") or cfg.get("default_key_path")
     if not pub:
-        raise ValueError("공개키 경로가 누락되었습니다. 'pubkey' 또는 'default_pubkey_path'를 지정하세요.")
+        # 최후의 기본값: ~/.ssh/id_ed25519.pub
+        pub = "~/.ssh/id_ed25519.pub"
     pub = os.path.expanduser(pub)
+
+    # priv는 pub에서 자동 유도(.pub 제거) — JSON에 별도 지정할 필요 없음
     priv = srv.get("privkey") or cfg.get("default_privkey_path")
     if not priv and pub.endswith(".pub"):
         priv = pub[:-4]
@@ -254,6 +366,7 @@ def main():
 
         print(f"\n[CHECK {i:02d}] 키 인증 접속 확인 → {username}@{host}:{port}")
         key_ok = False
+        # 개인키가 존재하면 먼저 무비번 접속 확인
         if privkey_path and os.path.exists(privkey_path):
             try:
                 r = test_key_login(host, port, username, privkey_path)
@@ -266,7 +379,7 @@ def main():
             except Exception as e:
                 print(f"[INFO ] 현재는 키 인증 접속 불가 → 배포 시도 ({e})")
         else:
-            print("[INFO ] 개인키 경로가 없거나 파일이 없음 → 배포 시도")
+            print("[INFO ] 개인키가 없거나 경로 미지정 → 배포 시도(필요 시 자동 생성)")
 
         if key_ok:
             continue
@@ -289,6 +402,9 @@ def main():
                 print(f"[INFO ] SSH 디렉터리: {info['ssh_dir']}")
                 print(f"[INFO ] authorized_keys: {info['auth_keys']}")
                 print(f"[INFO ] 키 {'추가됨' if info['changed'] else '이미 존재'}")
+                # 배포 단계에서 필요시 키쌍을 생성했으므로 priv 경로 보정
+                if not privkey_path:
+                    privkey_path = info.get("priv_path")
             except PasswordAuthError:
                 show_error_dialog("Authentication Failed", "비밀번호가 올바르지 않습니다. 다시 시도하세요.")
                 continue

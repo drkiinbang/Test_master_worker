@@ -23,6 +23,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <memory>
@@ -63,6 +64,12 @@ typedef int SOCKET;
 #define closesocket close
 #endif
 
+/// <windows.h> 는 <winsock2.h> 보다 먼저 포함되면 충돌
+/// <windows.h> 안에는 오래된 <winsock.h> 를 암묵적으로 포함하는 경우가 있어서, 이후 <winsock2.h> 와 상수 / 매크로 / 함수가 중복 정의되어 에러가 발생
+/// 따라서, #include <winsock2.h> 를 반드시 <windows.h>보다 먼저 포함해야 함
+#ifdef _WIN32
+#include <windows.h>
+#endif
 /// ---------- UTF-8/Wide helpers ----------
 static std::string wstring_to_utf8(const std::wstring& wstr) {
     std::wstring_convert<std::codecvt_utf8<wchar_t>> conv;
@@ -143,6 +150,101 @@ struct RemoteWorkerConfig {
     }
 };
 
+/// === Self executable absolute path ===
+// 요구 헤더(이미 포함돼 있다면 중복 include는 생략하세요)
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <limits.h>
+#include <unistd.h>
+#include <vector>
+#include <string>
+#endif
+
+// 문자열 유틸: 프로젝트에 이미 있는 wstring_to_utf8 사용
+// std::string wstring_to_utf8(const std::wstring&);
+
+static std::string getSelfExePath() {
+#ifdef _WIN32
+    // Wide 버전으로 얻고 UTF-8로 변환: 한글/비 ASCII 경로 안전
+    std::wstring wpath;
+    DWORD cap = 260; // 초기 버퍼(필요 시 확장)
+    for (;;) {
+        std::vector<wchar_t> buf(cap);
+        DWORD n = GetModuleFileNameW(nullptr, buf.data(), static_cast<DWORD>(buf.size()));
+        if (n == 0) {
+            return std::string(); // 실패
+        }
+        if (n < buf.size() - 1) {
+            wpath.assign(buf.data(), n);
+            break;
+        }
+        cap *= 2; // 버퍼 확장 후 재시도
+    }
+
+    // (선택) 절대 경로/롱패스 정규화가 필요하면 GetFullPathNameW/ GetLongPathNameW 추가 가능
+    return wstring_to_utf8(wpath);
+
+#elif __APPLE__
+    // 기존 로직 유지 + realpath로 심볼릭 링크/상대경로 해소
+#include <mach-o/dyld.h>
+    uint32_t size = 0;
+    _NSGetExecutablePath(nullptr, &size);
+    std::vector<char> buf(size);
+    if (_NSGetExecutablePath(buf.data(), &size) != 0) return std::string();
+    char resolved[PATH_MAX] = { 0 };
+    if (realpath(buf.data(), resolved)) return std::string(resolved);
+    return std::string(buf.data());  // realpath 실패 시 원본
+
+#else
+    // Linux: /proc/self/exe → 가능하면 realpath로 정규화
+    std::vector<char> buf(4096);
+    ssize_t n = readlink("/proc/self/exe", buf.data(), buf.size() - 1);
+    if (n <= 0) return std::string();
+    buf[n] = '\0';
+    char resolved[PATH_MAX] = { 0 };
+    if (realpath(buf.data(), resolved)) return std::string(resolved);
+    return std::string(buf.data());  // realpath 실패 시 원본
+#endif
+}
+
+static int startLocalWorkerNewWindow(const std::string& exePath,
+    const std::string& master_ip,
+    int master_port) {
+    // 공통 base 커맨드
+    const std::string base = "\"" + exePath + "\" worker " + master_ip + " " + std::to_string(master_port);
+
+#if defined(_WIN32)
+    // 새 콘솔 창: cmd /c start "" "<exe>" args...
+    std::string cmd = "cmd /c start \"\" " + base;
+    return std::system(cmd.c_str());
+
+#elif defined(__APPLE__)
+    // Terminal.app 새 창
+    std::string bashLine = "bash -lc \\\"" + escapeDQ(base) + "; exec bash -i\\\"";
+    std::string cmd = "osascript -e 'tell application \"Terminal\" to do script \"" + bashLine + "\"' "
+        "-e 'tell application \"Terminal\" to activate'";
+    return std::system(cmd.c_str());
+
+#else
+    // Linux: gnome-terminal/konsole/xterm 우선, 없으면 tmux 백그라운드
+    std::string inner =
+        "if [ -z \"$DISPLAY\" ]; then export DISPLAY=:0; fi; "
+        "if command -v gnome-terminal >/dev/null 2>&1; then "
+        "gnome-terminal -- bash -lc \"" + escapeDQ(base) + "; exec bash -i\"; "
+        "elif command -v konsole >/dev/null 2>&1; then "
+        "konsole --hold -e bash -lc \"" + escapeDQ(base) + "; exec bash -i\"; "
+        "elif command -v xterm >/dev/null 2>&1; then "
+        "xterm -hold -e \"" + escapeDQ(base) + "\"; "
+        "else "
+        "tmux new-session -d -s pointcloud \"" + escapeDQ(base) + "\"; "
+        "echo \"No desktop terminal found; started in tmux session 'pointcloud'\"; "
+        "fi";
+    std::string cmd = "bash -lc \"" + escapeDQ(inner) + "\"";
+    return std::system(cmd.c_str());
+#endif
+}
+
 /// 설정 파일 관리
 /// - workers.conf를 읽고 RemoteWorkerConfig 목록을 생성
 /// - 파일이 없을 경우 기본 템플릿 생성 함수 제공
@@ -163,6 +265,8 @@ struct RuntimeSettings {
     int  ssh_server_alive_count_max = 2;
     bool ssh_batch_mode = true;             /// BatchMode=yes
     std::string ssh_strict_host_key = "accept-new"; /// accept-new / yes / no
+
+    bool run_local_worker_on_master = false;
 };
 
 /// ---------- Config manager ----------
@@ -189,10 +293,16 @@ public:
         file << "ssh_batch_mode=yes\n";
         file << "ssh_strict_host_key=accept-new\n\n";
 
-        file << "# ===== Remote workers (examples) =====\n";
-        file << "# 192.168.1.100,user1,/home/user1/point_cloud_worker,22\n";
-        file << "# 192.168.1.101,user2,/opt/workers/point_cloud_worker,22\n";
-        file << "# 10.0.0.50,admin,C:\\\\Workers\\\\point_cloud_worker.exe,22\n";
+        // conf 최초 생성 시 쓰는 템플릿 내용에 추가
+        file << "# --- options ---\n";
+        file << "run_local_worker_on_master=true\n";   /// 기본값 true
+        file << "\n";
+
+        file << "# --- workers (examples) ---\n";
+        file << "# ip,username,worker_path[,ssh_port][,os]\n";
+        file << "#10.10.10.17,kiinbang,C:\\Workers\\Test_master_worker.exe,22,windows\n";
+        file << "#10.10.10.18,kiinbang,/Users/kiinbang/Workers/Test_master_worker,22,mac\n";
+        file << "#10.10.10.19,kiinbang,/home/kiinbang/Workers/Test_master_worker,22,linux\n";
     }
 
     static void ensureConfig(const std::string& config_file) {
@@ -206,7 +316,7 @@ public:
         std::vector<RemoteWorkerConfig> workers;
         std::ifstream file(config_file);
         if (!file.is_open()) {
-            std::wcout << L"Config file not found: " << config_file.c_str()
+            std::wcout << L"Config file not found: " << utf8_to_wstring(config_file)
                 << L". Running with local workers only.\n";
             return workers;
         }
@@ -224,8 +334,8 @@ public:
                     cfg.worker_path = trim(tokens[2]);
                     if (tokens.size() >= 4) cfg.ssh_port = std::stoi(trim(tokens[3]));
                     workers.push_back(cfg);
-                    std::wcout << L"Loaded remote worker: " << cfg.ip_address.c_str()
-                        << L" (" << cfg.username.c_str() << L")\n";
+                    std::wcout << L"Loaded remote worker: " << utf8_to_wstring(cfg.ip_address)
+                        << L" (" << utf8_to_wstring(cfg.username) << L")\n";
                 }
             }
         }
@@ -267,6 +377,10 @@ public:
                 else if (lk == "ssh_server_alive_count_max") s.ssh_server_alive_count_max = std::stoi(v);
                 else if (lk == "ssh_batch_mode") s.ssh_batch_mode = (lv == "1" || lv == "true" || lv == "yes" || lv == "on");
                 else if (lk == "ssh_strict_host_key") s.ssh_strict_host_key = v;
+                else if (lk == "run_local_worker_on_master") {
+                    if (lv == "1" || lv == "true") s.run_local_worker_on_master = true;
+                    else s.run_local_worker_on_master = false;
+                }
             }
             catch (...) {
                 std::wcout << L"[Config] Failed to parse key: " << k.c_str() << L"\n";
@@ -316,6 +430,7 @@ public:
 
 private:
     void runRemoteWorker(const RemoteWorkerConfig& config) {
+
         std::wcout << L"Starting remote worker on " << config.ip_address.c_str() << L"\n";
         std::stringstream ssh_command;
 #ifdef _WIN32
@@ -346,7 +461,7 @@ private:
             << " worker " << master_ip << " " << master_port << " " << "workers.conf" << "'";
 #endif
         const std::string cmd = ssh_command.str();
-        std::wcout << L"Executing: " << cmd.c_str() << L"\n";
+        std::wcout << L"Executing: " << utf8_to_wstring(cmd) << L"\n";
 
         while (!should_stop.load()) {
             int rc = std::system(cmd.c_str());
@@ -469,7 +584,7 @@ public:
     void generateSampleData() {
         std::random_device rd; std::mt19937 gen(rd());
         std::uniform_real_distribution<float> dis(-100.0f, 100.0f);
-        for (int cid = 0; cid < 10; ++cid) {
+        for (int cid = 0; cid < 100; ++cid) {
             PointCloudChunk c; c.chunk_id = cid;
             for (int i = 0; i < 1000; ++i) c.points.emplace_back(dis(gen), dis(gen), dis(gen));
             chunks.push_back(std::move(c));
@@ -486,6 +601,28 @@ public:
         ConfigManager::ensureConfig(config_file);
         settings = ConfigManager::loadRuntimeSettings(config_file);
         remote_configs = ConfigManager::loadRemoteWorkers(config_file);
+
+        /// Start a local worker
+        if (settings.run_local_worker_on_master) {
+            const std::string selfExe = getSelfExePath();
+
+            int rc = startLocalWorkerNewWindow(selfExe, "127.0.0.1", this->port);
+#ifdef _WIN32
+            if (rc != 0) {
+                std::wcerr << L"[WARN ] Local worker start failed (rc=" << rc << L")\n";
+            }
+            else {
+                std::wcout << L"[ OK  ] Local worker started in a new window\n";
+            }
+#else
+            if (rc != 0) {
+                std::cerr << "[WARN ] Local worker start failed (rc=" << rc << ")\n";
+            }
+            else {
+                std::cout << "[ OK  ] Local worker started in a new window\n";
+            }
+#endif
+        }
 
         /// Create listening socket
         SOCKET server_sock = socket(AF_INET, SOCK_STREAM, 0);
@@ -510,7 +647,7 @@ public:
             std::string master_ip = getLocalIPAddress();
             remote_manager = std::make_unique<RemoteWorkerManager>(remote_configs, master_ip, port, settings);
             std::wcout << L"Starting remote workers (Master IP: "
-                << master_ip.c_str() << L":" << port << L")...\n";
+                << utf8_to_wstring(master_ip) << L":" << port << L")...\n";
             remote_manager->startRemoteWorkers();
             std::this_thread::sleep_for(std::chrono::seconds(2));
         }
@@ -542,7 +679,7 @@ public:
 
             char ipStr[INET_ADDRSTRLEN] = { 0 };
             inet_ntop(AF_INET, &client_addr.sin_addr, ipStr, INET_ADDRSTRLEN);
-            std::wcout << L"Worker connected: " << ipStr << L"\n";
+            std::wcout << L"Worker connected: " << utf8_to_wstring(ipStr) << L"\n";
 
             int idx = (!draining) ? chunk_index.fetch_add(1) : INT32_MAX;
 
@@ -710,7 +847,10 @@ private:
         std::this_thread::sleep_for(std::chrono::milliseconds(500)); /// demo delay
 
         ProcessResult r; r.chunk_id = chunk.chunk_id;
-        r.avg_distance = total_distance / static_cast<float>(chunk.points.size());
+        if (chunk.points.size() > 0)
+            r.avg_distance = total_distance / static_cast<float>(chunk.points.size());
+        else
+            r.avg_distance = 0.f;
         r.point_count = static_cast<int>(chunk.points.size());
         std::wcout << L"Finished processing chunk " << chunk.chunk_id
             << L" (avg_distance: " << r.avg_distance << L")\n";

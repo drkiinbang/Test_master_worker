@@ -17,6 +17,13 @@
 /// - Worker self-termination on no-more-work/no-response
 /// - SSH non-interactive options; timeouts/retries configurable via config
 ///////////////////////////////////////////////////////////////////////////////
+/// [Q] 모든 작업완료 전에, 모든 woker가 종료되면 어떻게 되지?
+/// [A] 모든 chunk가 끝나기 전에 워커가 전부 종료되면, 마스터는 accept 루프에서 계속 대기함
+/// draining은 모든 결과를 다 받았을 때만 켜지므로 아직 draining으로도 못 넘어가고 멈춰 있게 됨
+/// 다만 원격 워커가 설정돼 있고 RemoteWorkerManager가 돌고 있으면, 
+/// 그 쓰레드가 주기적으로 다시 워커를 띄우기 때문에 곧 새 워커가 접속해 이어서 처리하게 됨
+/// 로컬 워커만 가동된 경우(한 번만 새 창으로 워커 실행) : 워커가 닫히면 
+/// 자동 재시작이 없어서 마스터는 새 접속이 오기 전까지 진행이 무한히 멈추게 됨 (수정될 예정)
 
 #include <algorithm>
 #include <atomic>
@@ -24,6 +31,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <deque>
 #include <fstream>
 #include <iostream>
 #include <memory>
@@ -32,6 +40,7 @@
 #include <sstream>
 #include <string>
 #include <thread>
+#include <unordered_set>
 #include <vector>
 #include <locale>
 #include <codecvt>
@@ -267,6 +276,9 @@ struct RuntimeSettings {
     std::string ssh_strict_host_key = "accept-new"; /// accept-new / yes / no
 
     bool run_local_worker_on_master = false;
+
+    int master_starvation_seconds = 30;   /// 진행 없음 + 워커 무접속 임계시간
+    int emergency_local_spawn_max = 3;    /// 비상 로컬 워커 재기동 최대 횟수
 };
 
 /// ---------- Config manager ----------
@@ -381,6 +393,8 @@ public:
                     if (lv == "1" || lv == "true") s.run_local_worker_on_master = true;
                     else s.run_local_worker_on_master = false;
                 }
+                else if (lk == "master_starvation_seconds") s.master_starvation_seconds = std::stoi(v);
+                else if (lk == "emergency_local_spawn_max") s.emergency_local_spawn_max = std::stoi(v);
             }
             catch (...) {
                 std::wcout << L"[Config] Failed to parse key: " << k.c_str() << L"\n";
@@ -570,6 +584,12 @@ private:
     std::string                  config_file;
     RuntimeSettings              settings;
     std::vector<RemoteWorkerConfig> remote_configs;
+    /// 재배당 대기열 및 완료 집합
+    std::deque<int> retry_queue_;
+    std::mutex      retry_mtx_;
+    std::unordered_set<int> completed_chunk_ids_;
+    std::chrono::steady_clock::time_point last_progress_{ std::chrono::steady_clock::now() };
+    int emergency_local_spawned_ = 0;
 
 public:
     MasterServer(int p, const std::string& config = "workers.conf")
@@ -591,6 +611,11 @@ public:
         }
         std::wcout << L"Generated " << chunks.size() << L" chunks with total "
             << chunks.size() * 1000 << L" points\n";
+    }
+
+    bool has_pending_work() const {
+        /// 완료한 고유 청크 수 < 전체 청크 수 면 아직 할 일 있음
+        return completed_chunk_ids_.size() < chunks.size();
     }
 
     /// 서버 시작:
@@ -668,8 +693,25 @@ public:
 #else
             int ready = select(server_sock + 1, &rfds, nullptr, nullptr, &tv);
 #endif
+            auto now = std::chrono::steady_clock::now();
+
             if (ready <= 0) {
-                if (draining && std::chrono::steady_clock::now() >= drain_deadline) break;
+                // ★ 굶주림 워치독: 접속이 "없을 때"도 체크해야 재기동이 됨
+                if (!draining && has_pending_work()) {
+                    auto idle = std::chrono::duration_cast<std::chrono::seconds>(now - last_progress_).count();
+                    if (idle >= settings.master_starvation_seconds) {
+                        if (settings.run_local_worker_on_master &&
+                            emergency_local_spawned_ < settings.emergency_local_spawn_max) {
+
+                            const std::string selfExe = getSelfExePath();
+                            int rc = startLocalWorkerNewWindow(selfExe, "127.0.0.1", this->port);
+                            ++emergency_local_spawned_;
+                            last_progress_ = now;
+                            // (로그는 기존 코드 그대로)
+                        }
+                    }
+                }
+                if (draining && now >= drain_deadline) break;
                 continue;
             }
 
@@ -681,22 +723,46 @@ public:
             inet_ntop(AF_INET, &client_addr.sin_addr, ipStr, INET_ADDRSTRLEN);
             std::wcout << L"Worker connected: " << utf8_to_wstring(ipStr) << L"\n";
 
-            int idx = (!draining) ? chunk_index.fetch_add(1) : INT32_MAX;
+            int cid = INT32_MAX;
+            bool has_work = (!draining) && try_acquire_next_chunk(cid);
 
-            if (!draining && idx < static_cast<int>(chunks.size())) {
-                std::string chunk_data = chunks[idx].serialize();
-                if (NetworkUtils::sendData(client_sock, chunk_data)) {
-                    std::wcout << L"Sent chunk " << idx << L" to worker\n";
+            if (has_work) {
+                // 청크 전송
+                std::string chunk_data = chunks[cid].serialize();
+                bool sent_ok = NetworkUtils::sendData(client_sock, chunk_data);
+                if (!sent_ok) {
+                    std::wcout << L"[WARN ] Failed to send chunk " << cid << L" to worker. Requeue.\n";
+                    requeue_chunk_if_needed(cid);
+                }
+                else {
+                    std::wcout << L"Sent chunk " << cid << L" to worker\n";
+                    // 결과 수신
                     std::string result_data = NetworkUtils::receiveData(client_sock);
-                    if (!result_data.empty()) {
+                    if (result_data.empty()) {
+                        std::wcout << L"[WARN ] Worker disconnected before sending result for chunk "
+                            << cid << L". Requeue.\n";
+                        requeue_chunk_if_needed(cid);
+                    }
+                    else {
                         ProcessResult r = ProcessResult::deserialize(result_data);
+                        // 중복 결과 방지(느리게 도착한 중복 결과/재배정 후 중복 대비)
+                        bool first_time = false;
                         {
                             std::lock_guard<std::mutex> lk(results_mutex);
-                            results.push_back(r);
-                            std::wcout << L"Received result for chunk " << r.chunk_id
-                                << L": avg_distance=" << r.avg_distance
-                                << L", points=" << r.point_count << L"\n";
-                            if (results.size() == chunks.size()) {
+                            if (completed_chunk_ids_.insert(r.chunk_id).second) {
+                                results.push_back(r);
+                                first_time = true;
+                                std::wcout << L"Received result for chunk " << r.chunk_id
+                                    << L": avg_distance=" << r.avg_distance
+                                    << L", points=" << r.point_count << L"\n";
+                            }
+                            else {
+                                std::wcout << L"[INFO ] Duplicate result ignored for chunk "
+                                    << r.chunk_id << L"\n";
+                            }
+
+                            // 모든 청크 완료 → 드레이닝 시작
+                            if (completed_chunk_ids_.size() == chunks.size() && !draining) {
                                 all_chunks_processed.store(true);
                                 draining = true;
                                 drain_deadline = std::chrono::steady_clock::now()
@@ -706,9 +772,12 @@ public:
                             }
                         }
                     }
+
+                    last_progress_ = std::chrono::steady_clock::now();
                 }
             }
             else {
+                /// 더 줄 일이 없으면 종료 신호
                 NetworkUtils::sendTerminationSignal(client_sock);
                 std::wcout << L"Sent termination signal to worker\n";
             }
@@ -737,6 +806,31 @@ private:
         if (!results.empty()) {
             std::wcout << L"Overall average distance: " << (total_avg / results.size()) << L"\n";
             std::wcout << L"Total points processed: " << total_points << L"\n";
+        }
+    }
+
+    /// 재배당 대기열 우선 → 없으면 전진 인덱스에서 하나 할당
+    bool try_acquire_next_chunk(int& out_cid) {
+        std::lock_guard<std::mutex> lk(retry_mtx_);
+        if (!retry_queue_.empty()) {
+            out_cid = retry_queue_.front();
+            retry_queue_.pop_front();
+            return true;
+        }
+        int idx = chunk_index.fetch_add(1);
+        if (idx < static_cast<int>(chunks.size())) {
+            out_cid = idx;
+            return true;
+        }
+        return false;
+    }
+
+    /// 실패/중단 시 청크 재배치
+    void requeue_chunk_if_needed(int cid) {
+        std::lock_guard<std::mutex> lk(retry_mtx_);
+        // 이미 결과를 받은 청크는 재배정하지 않음(중복 방지)
+        if (completed_chunk_ids_.find(cid) == completed_chunk_ids_.end()) {
+            retry_queue_.push_back(cid);
         }
     }
 };

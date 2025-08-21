@@ -132,11 +132,6 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp" />
-    <ClCompile Include="src\master.cpp" />
-    <ClCompile Include="src\ssh_exec.cpp" />
-    <ClCompile Include="src\utils.cpp" />
-    <ClCompile Include="src\worker.cpp" />
-    <ClCompile Include="src\worker_config.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\master.h" />

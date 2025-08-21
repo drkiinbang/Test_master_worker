@@ -147,17 +147,35 @@ def _detect_remote_platform(ssh):
         pass
     return "windows"
 
-def _ensure_ssh_dir_and_perms(ssh, platform, home_dir):
-    ssh_dir = posixpath.join(home_dir, ".ssh")
-    auth_keys = posixpath.join(ssh_dir, "authorized_keys")
+def _ensure_ssh_dir_and_perms(ssh, platform, home_dir_shell: str, home_dir_sftp: str | None = None):
+    """
+    원격 OS별로 .ssh/authorized_keys 를 보장하고 권한을 설정합니다.
+    - home_dir_shell: 원격 쉘 명령에서 사용할 홈 경로 (POSIX: /home/user, Windows: C:\\Users\\user)
+    - home_dir_sftp : SFTP에서 사용할 홈 경로 (슬래시 / 사용). None이면 home_dir_shell을 기반으로 변환
+    return: (ssh_dir_shell, auth_keys_shell, ssh_dir_sftp, auth_keys_sftp)
+    """
+    if home_dir_sftp is None:
+        # SFTP는 슬래시 경로가 안전
+        home_dir_sftp = home_dir_shell.replace("\\", "/")
+
     if platform == "posix":
-        ssh.exec_command(f"mkdir -p '{ssh_dir}' && chmod 700 '{ssh_dir}'")
-        ssh.exec_command(f"touch '{auth_keys}' && chmod 600 '{auth_keys}'")
+        ssh_dir_shell = posixpath.join(home_dir_shell, ".ssh")
+        auth_keys_shell = posixpath.join(ssh_dir_shell, "authorized_keys")
+
+        ssh.exec_command(f"mkdir -p '{ssh_dir_shell}' && chmod 700 '{ssh_dir_shell}'")
+        ssh.exec_command(f"touch '{auth_keys_shell}' && chmod 600 '{auth_keys_shell}'")
+
+        ssh_dir_sftp = posixpath.join(home_dir_sftp, ".ssh")
+        auth_keys_sftp = posixpath.join(ssh_dir_sftp, "authorized_keys")
     else:
+        # Windows: 쉘 명령에서는 백슬래시, SFTP에서는 슬래시 경로 사용
+        ssh_dir_shell = f"{home_dir_shell}\\.ssh"
+        auth_keys_shell = f"{ssh_dir_shell}\\authorized_keys"
+
         ps = rf"""
 $ErrorActionPreference='Stop'
-$ssh='{ssh_dir}'
-$auth='{auth_keys}'
+$ssh='{ssh_dir_shell}'
+$auth='{auth_keys_shell}'
 if (!(Test-Path $ssh)) {{ New-Item -ItemType Directory -Path $ssh | Out-Null }}
 if (!(Test-Path $auth)) {{ New-Item -ItemType File -Path $auth | Out-Null }}
 $u = "$env:USERNAME"
@@ -167,17 +185,27 @@ icacls $auth /inheritance:r | Out-Null
 icacls $auth /grant:r $u:(R,W) | Out-Null
 """
         ssh.exec_command(f"powershell -NoProfile -NonInteractive -Command \"{ps}\"")
-    return ssh_dir, auth_keys
 
-def _append_key_if_missing(ssh, sftp, auth_keys, public_key_text):
+        ssh_dir_sftp = posixpath.join(home_dir_sftp, ".ssh")
+        auth_keys_sftp = posixpath.join(ssh_dir_sftp, "authorized_keys")
+
+    return ssh_dir_shell, auth_keys_shell, ssh_dir_sftp, auth_keys_sftp
+
+def _append_key_if_missing(ssh, sftp, auth_keys_sftp, public_key_text):
     existing = ""
     try:
-        with sftp.open(auth_keys, "r") as f:
+        with sftp.open(auth_keys_sftp, "r") as f:
             existing = f.read().decode(errors="replace")
     except IOError:
         existing = ""
     if public_key_text.strip() not in existing:
-        with sftp.open(auth_keys, "a") as f:
+        # 부모 디렉터리가 없으면(드물지만) 만들어 둠
+        parent = posixpath.dirname(auth_keys_sftp.rstrip("/"))
+        try:
+            sftp.stat(parent)
+        except IOError:
+            sftp.mkdir(parent)
+        with sftp.open(auth_keys_sftp, "a") as f:
             f.write(public_key_text.strip() + "\n")
         return True
     return False
@@ -305,30 +333,38 @@ def deploy_key_with_password(host, port, username, password, pubkey_path):
         except (paramiko.SSHException, socket.error) as e:
             raise SshConnectError(f"SSH 연결 실패: {e}") from e
 
-        # 홈 디렉터리 확인
+        # 홈 디렉터리 확인 (쉘 관점)
         stdin, stdout, stderr = ssh.exec_command("echo $HOME")
-        home_dir = stdout.read().decode().strip()
-        if not home_dir:
+        home_dir_shell = stdout.read().decode().strip()
+        if not home_dir_shell:
             stdin, stdout, stderr = ssh.exec_command(
                 "powershell -NoProfile -NonInteractive -Command \"$env:USERPROFILE\"")
-            home_dir = stdout.read().decode().strip()
-        if not home_dir:
+            home_dir_shell = stdout.read().decode().strip()
+        if not home_dir_shell:
             raise RuntimeError("원격 홈 디렉터리를 확인할 수 없습니다.")
 
         platform = _detect_remote_platform(ssh)
-        ssh_dir, auth_keys = _ensure_ssh_dir_and_perms(ssh, platform, home_dir)
 
+        # SFTP 관점의 홈 (항상 슬래시 사용)
         sftp = ssh.open_sftp()
         try:
-            changed = _append_key_if_missing(ssh, sftp, auth_keys, public_key_text)
+            sftp_home = sftp.normalize(".")
+            ssh_dir_shell, auth_keys_shell, ssh_dir_sftp, auth_keys_sftp = _ensure_ssh_dir_and_perms(
+                ssh, platform, home_dir_shell, sftp_home
+            )
+
+            # authorized_keys에 공개키 append (SFTP 경로 사용)
+            changed = _append_key_if_missing(ssh, sftp, auth_keys_sftp, public_key_text)
         finally:
-            sftp.close()
+            try: sftp.close()
+            except Exception: pass
 
+        # POSIX 권한 보정
         if platform == "posix":
-            ssh.exec_command(f"chmod 700 '{ssh_dir}' && chmod 600 '{auth_keys}'")
+            ssh.exec_command(f"chmod 700 '{ssh_dir_shell}' && chmod 600 '{auth_keys_shell}'")
 
-        return {"platform": platform, "home": home_dir, "ssh_dir": ssh_dir,
-                "auth_keys": auth_keys, "changed": changed, "priv_path": priv_path}
+        return {"platform": platform, "home_shell": home_dir_shell, "home_sftp": sftp_home,
+                "ssh_dir": ssh_dir_sftp, "auth_keys": auth_keys_sftp, "changed": changed, "priv_path": priv_path}
     finally:
         try: ssh.close()
         except Exception: pass
@@ -453,9 +489,9 @@ def main():
             print(f"[STEP 1] 공개키 배포 시도 → {username}@{host}:{port}")
             try:
                 info = deploy_key_with_password(host, port, username, password, pubkey_path)
-                print(f"[INFO ] 플랫폼: {info['platform']} / 홈: {info['home']}")
-                print(f"[INFO ] SSH 디렉터리: {info['ssh_dir']}")
-                print(f"[INFO ] authorized_keys: {info['auth_keys']}")
+                print(f"[INFO ] 플랫폼: {info['platform']} / 홈(shell): {info['home_shell']} / 홈(sftp): {info['home_sftp']}")
+                print(f"[INFO ] SSH 디렉터리(SFTP): {info['ssh_dir']}")
+                print(f"[INFO ] authorized_keys(SFTP): {info['auth_keys']}")
                 print(f"[INFO ] 키 {'추가됨' if info['changed'] else '이미 존재'}")
                 # 배포 단계에서 필요시 키쌍을 생성했으므로 priv 경로 보정
                 if not privkey_path:

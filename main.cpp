@@ -25,6 +25,10 @@
 /// 로컬 워커만 가동된 경우(한 번만 새 창으로 워커 실행) : 워커가 닫히면 
 /// 자동 재시작이 없어서 마스터는 새 접속이 오기 전까지 진행이 무한히 멈추게 됨 (수정될 예정)
 
+/// Silence deprecation warnings for <codecvt> on MSVC
+/// This macro musb be defined before including <codecvt>
+#define _SILENCE_CXX17_CODECVT_HEADER_DEPRECATION_WARNING 1
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -44,6 +48,13 @@
 #include <vector>
 #include <locale>
 #include <codecvt>
+
+/// Simple quote-escape helper for shell-safe command building (macOS/Linux)
+static std::string escapeDQ(const std::string & s) {
+    std::string out; out.reserve(s.size());
+    for (char c : s) out += (c == '"') ? "\\\"" : std::string(1, c);
+    return out;
+}
 
 /// Wide characters for Windows console (not used in Linux)
 #ifdef _WIN32
@@ -170,6 +181,10 @@ struct RemoteWorkerConfig {
 #include <string>
 #endif
 
+#ifdef __APPLE__
+#include <mach-o/dyld.h>   // moved to global scope
+#endif
+
 // 문자열 유틸: 프로젝트에 이미 있는 wstring_to_utf8 사용
 // std::string wstring_to_utf8(const std::wstring&);
 
@@ -196,7 +211,6 @@ static std::string getSelfExePath() {
 
 #elif __APPLE__
     // 기존 로직 유지 + realpath로 심볼릭 링크/상대경로 해소
-#include <mach-o/dyld.h>
     uint32_t size = 0;
     _NSGetExecutablePath(nullptr, &size);
     std::vector<char> buf(size);

@@ -115,7 +115,7 @@ struct ProcessResult {
 };
 
 /// === Self executable absolute path ===
-static std::string getSelfExePath();
+std::string getSelfExePath();
 
 /// 로컬 IP 자동 탐지(IPv4)
-static std::string getLocalIPAddress();
+std::string getLocalIPAddress(); /// static 키워드는 해당 함수의 가시성을 정의된 파일 내부로 제한함

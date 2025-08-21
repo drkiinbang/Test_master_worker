@@ -1,80 +1,9 @@
 ﻿#include "master.h"
+#include "common.h"
 #include "network.h"
 #include <iostream>
 #include <algorithm>
 #include <random>
-
-static std::string getSelfExePath() {
-#ifdef _WIN32
-    std::wstring wpath;
-    DWORD cap = 260;
-    for (;;) {
-        std::vector<wchar_t> buf(cap);
-        DWORD n = GetModuleFileNameW(nullptr, buf.data(), static_cast<DWORD>(buf.size()));
-        if (n == 0) {
-            return std::string();
-        }
-        if (n < buf.size() - 1) {
-            wpath.assign(buf.data(), n);
-            break;
-        }
-        cap *= 2;
-    }
-    return wstring_to_utf8(wpath);
-#elif __APPLE__
-    uint32_t size = 0;
-    _NSGetExecutablePath(nullptr, &size);
-    std::vector<char> buf(size);
-    if (_NSGetExecutablePath(buf.data(), &size) != 0) return std::string();
-    char resolved[PATH_MAX] = { 0 };
-    if (realpath(buf.data(), resolved)) return std::string(resolved);
-    return std::string(buf.data());
-#else
-    std::vector<char> buf(4096);
-    ssize_t n = readlink("/proc/self/exe", buf.data(), buf.size() - 1);
-    if (n <= 0) return std::string();
-    buf[n] = '\0';
-    char resolved[PATH_MAX] = { 0 };
-    if (realpath(buf.data(), resolved)) return std::string(resolved);
-    return std::string(buf.data());
-#endif
-}
-
-static std::string getLocalIPAddress() {
-    std::string local_ip = "127.0.0.1";
-#ifdef _WIN32
-    char hostname[256] = { 0 };
-    if (gethostname(hostname, sizeof(hostname)) != 0) {
-        return local_ip;
-    }
-    addrinfo hints{}; hints.ai_family = AF_INET; hints.ai_socktype = SOCK_STREAM; hints.ai_protocol = IPPROTO_TCP;
-    addrinfo* result = nullptr;
-    if (getaddrinfo(hostname, nullptr, &hints, &result) != 0 || !result) {
-        return local_ip;
-    }
-    char ipStr[INET_ADDRSTRLEN] = { 0 };
-    auto* a = reinterpret_cast<sockaddr_in*>(result->ai_addr);
-    if (inet_ntop(AF_INET, &(a->sin_addr), ipStr, sizeof(ipStr))) {
-        local_ip = ipStr;
-    }
-    freeaddrinfo(result);
-#else
-    struct ifaddrs* ifaddr = nullptr;
-    if (getifaddrs(&ifaddr) == -1) return local_ip;
-    for (auto* ifa = ifaddr; ifa != nullptr; ifa = ifa->ifa_next) {
-        if (!ifa || !ifa->ifa_addr) continue;
-        if (ifa->ifa_addr->sa_family == AF_INET && !(ifa->ifa_flags & IFF_LOOPBACK)) {
-            char ip[INET_ADDRSTRLEN] = { 0 };
-            void* addr_ptr = &((struct sockaddr_in*)ifa->ifa_addr)->sin_addr;
-            if (inet_ntop(AF_INET, addr_ptr, ip, sizeof(ip))) {
-                local_ip = ip; break;
-            }
-        }
-    }
-    freeifaddrs(ifaddr);
-#endif
-    return local_ip;
-}
 
 static int startLocalWorkerNewWindow(const std::string& exePath,
     const std::string& master_ip,

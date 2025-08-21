@@ -127,6 +127,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="common.cpp" />
     <ClCompile Include="config.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="master.cpp" />

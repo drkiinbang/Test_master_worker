@@ -2,12 +2,29 @@
 #include "utils.h"
 #include <fstream>
 #include <iostream>
+#include <filesystem>
 
-std::vector<RemoteWorkerConfig> load_remote_workers(const std::string& filename) {
+namespace fs = std::filesystem;
+
+static const char* DEFAULT_CONF =
+"# Default workers.conf generated automatically\n"
+"# Format: host,username,exe_path,port,auth_type,password,hostkey\n"
+"127.0.0.1,localuser,C:\\\\Workers\\\\Test_master_worker.exe,22,password,localpass,\n";
+
+std::vector<RemoteWorkerConfig> load_remote_workers(const std::string& exe_dir) {
     std::vector<RemoteWorkerConfig> workers;
-    std::ifstream fin(filename);
+    std::string conf_path = exe_dir + "/workers.conf";
+
+    if (!fs::exists(conf_path)) {
+        std::cerr << "[WARN] workers.conf not found. Creating default: " << conf_path << "\n";
+        std::ofstream fout(conf_path);
+        fout << DEFAULT_CONF;
+        fout.close();
+    }
+
+    std::ifstream fin(conf_path);
     if (!fin) {
-        std::cerr << "[ERROR] Cannot open workers.conf: " << filename << "\n";
+        std::cerr << "[ERROR] Cannot open workers.conf even after creating default.\n";
         return workers;
     }
 

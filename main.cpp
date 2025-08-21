@@ -6,17 +6,17 @@
 int main(int argc, char* argv[]) {
     if (argc < 2) {
         std::cerr << "Usage:\n"
-            << "  " << argv[0] << " master <ip> <port> <workers.conf>\n"
-            << "  " << argv[0] << " worker <master_ip> <master_port> <worker.conf>\n";
+            << "  " << argv[0] << " master <ip> <port>\n"
+            << "  " << argv[0] << " worker <master_ip> <master_port>\n";
         return 1;
     }
 
     std::string mode = argv[1];
-    if (mode == "master" && argc >= 5) {
-        run_master(argv[2], std::stoi(argv[3]), argv[4]);
+    if (mode == "master" && argc >= 4) {
+        run_master(argv[2], std::stoi(argv[3]));
     }
-    else if (mode == "worker" && argc >= 5) {
-        run_worker(argv[2], std::stoi(argv[3]), argv[4]);
+    else if (mode == "worker" && argc >= 4) {
+        run_worker(argv[2], std::stoi(argv[3]), "workers.conf");
     }
     else {
         std::cerr << "[ERROR] Invalid arguments\n";

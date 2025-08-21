@@ -1,5 +1,4 @@
 ﻿#pragma once
-#pragma once
 #include <string>
 #include <vector>
 
@@ -13,4 +12,4 @@ struct RemoteWorkerConfig {
     std::string hostkey;
 };
 
-std::vector<RemoteWorkerConfig> load_remote_workers(const std::string& filename);
+std::vector<RemoteWorkerConfig> load_remote_workers(const std::string& exe_dir);

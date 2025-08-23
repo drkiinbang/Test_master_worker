@@ -127,11 +127,12 @@ workers.conf에서 조정 가능한 설정:
 추가 워커나 원격 워커를 통해 성능을 확장
 */
 
-/// main.cpp:
+/// main.cpp
 /// 명령행 인자 파싱
 /// 네트워크 초기화 / 정리
 /// 마스터 / 워커 모드 분기
 /// 전역 예외 처리
+/// master.config와 worker.config 분리 지원
 
 #include "Common.h"
 #include "Logger.h"
@@ -170,7 +171,8 @@ ErrorCode PointCloudApplication::runMaster(int port, const std::string& config_f
         auto chunks = ChunkProcessor::generateSampleData();
         server.setChunks(std::move(chunks));
 
-        std::wcout << L"Starting master server on port " << port << L"\n";
+        std::wcout << L"Starting master server on port " << port
+            << L" with config: " << utf8_to_wstring(config_file) << L"\n";
         ErrorCode result = server.start();
 
         cleanupNetworking();
@@ -191,16 +193,10 @@ ErrorCode PointCloudApplication::runWorker(const std::string& master_ip, int mas
     }
 
     try {
-        if (!ConfigurationManager::ensureConfigExists(config_file)) {
-            cleanupNetworking();
-            return ErrorCode::CONFIGURATION_ERROR;
-        }
-
-        RuntimeSettings settings = ConfigurationManager::loadRuntimeSettings(config_file);
-        WorkerClient worker(master_ip, master_port, settings);
+        WorkerClient worker(master_ip, master_port, config_file);
 
         std::wcout << L"Starting worker, connecting to " << utf8_to_wstring(master_ip)
-            << L":" << master_port << L"\n";
+            << L":" << master_port << L" with config: " << utf8_to_wstring(config_file) << L"\n";
 
         ErrorCode result = worker.start();
 
@@ -216,15 +212,20 @@ ErrorCode PointCloudApplication::runWorker(const std::string& master_ip, int mas
 }
 
 void PointCloudApplication::printUsage(const std::string& program_name) {
-    std::wcout << L"Point Cloud Distributed Processing System\n\n"
+    std::wcout << L"Point Cloud Distributed Processing System (Separated Config)\n\n"
         << L"Usage:\n"
         << L"  Master mode: " << utf8_to_wstring(program_name)
-        << L" master [port] [config_file]\n"
+        << L" master [port] [master_config_file]\n"
         << L"  Worker mode: " << utf8_to_wstring(program_name)
-        << L" worker [master_ip] [master_port] [config_file]\n\n"
+        << L" worker [master_ip] [master_port] [worker_config_file]\n\n"
         << L"Examples:\n"
         << L"  " << utf8_to_wstring(program_name) << L" master 8080\n"
-        << L"  " << utf8_to_wstring(program_name) << L" worker 192.168.1.100 8080\n";
+        << L"  " << utf8_to_wstring(program_name) << L" master 8080 my_master.config\n"
+        << L"  " << utf8_to_wstring(program_name) << L" worker 192.168.1.100 8080\n"
+        << L"  " << utf8_to_wstring(program_name) << L" worker 192.168.1.100 8080 my_worker.config\n\n"
+        << L"Default Config Files:\n"
+        << L"  Master: master.config\n"
+        << L"  Worker: worker.config\n";
 }
 
 bool PointCloudApplication::initializeNetworking() {
@@ -261,14 +262,14 @@ int wmain(int argc, wchar_t* argv[]) {
 
     if (mode == L"master") {
         int port = (argc >= 3) ? _wtoi(argv[2]) : DEFAULT_PORT;
-        std::string config = (argc >= 4) ? wstring_to_utf8(argv[3]) : "workers.conf";
+        std::string config = (argc >= 4) ? wstring_to_utf8(argv[3]) : "master.config";
         result = PointCloudApplication::runMaster(port, config);
 
     }
     else if (mode == L"worker") {
         std::string master_ip = (argc >= 3) ? wstring_to_utf8(argv[2]) : "127.0.0.1";
         int master_port = (argc >= 4) ? _wtoi(argv[3]) : DEFAULT_PORT;
-        std::string config = (argc >= 5) ? wstring_to_utf8(argv[4]) : "workers.conf";
+        std::string config = (argc >= 5) ? wstring_to_utf8(argv[4]) : "worker.config";
         result = PointCloudApplication::runWorker(master_ip, master_port, config);
 
     }
@@ -294,14 +295,14 @@ int main(int argc, char* argv[]) {
 
     if (mode == "master") {
         int port = (argc >= 3) ? std::stoi(argv[2]) : DEFAULT_PORT;
-        std::string config = (argc >= 4) ? argv[3] : "workers.conf";
+        std::string config = (argc >= 4) ? argv[3] : "master.config";
         result = PointCloudApplication::runMaster(port, config);
 
     }
     else if (mode == "worker") {
         std::string master_ip = (argc >= 3) ? argv[2] : "127.0.0.1";
         int master_port = (argc >= 4) ? std::stoi(argv[3]) : DEFAULT_PORT;
-        std::string config = (argc >= 5) ? argv[4] : "workers.conf";
+        std::string config = (argc >= 5) ? argv[4] : "worker.config";
         result = PointCloudApplication::runWorker(master_ip, master_port, config);
 
     }

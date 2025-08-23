@@ -18,7 +18,7 @@
 
 class MasterServer {
 public:
-    MasterServer(int port, const std::string& config_file = "workers.conf");
+    MasterServer(int port, const std::string& config_file = "master.config");
     ~MasterServer();
 
     void setChunks(std::vector<PointCloudChunk> chunks);
@@ -37,7 +37,7 @@ private:
     const int port_;
     const std::string config_file_;
 
-    RuntimeSettings settings_;
+    MasterSettings settings_;
     std::vector<RemoteWorkerConfig> remote_configs_;
 
     std::unique_ptr<WorkDistributor> work_distributor_;
@@ -72,11 +72,11 @@ void MasterServer::setChunks(std::vector<PointCloudChunk> chunks) {
 }
 
 ErrorCode MasterServer::start() {
-    if (!ConfigurationManager::ensureConfigExists(config_file_)) {
+    if (!ConfigurationManager::ensureMasterConfigExists(config_file_)) {
         return ErrorCode::CONFIGURATION_ERROR;
     }
 
-    settings_ = ConfigurationManager::loadRuntimeSettings(config_file_);
+    settings_ = ConfigurationManager::loadMasterSettings(config_file_);
     remote_configs_ = ConfigurationManager::loadRemoteWorkers(config_file_);
 
     ErrorCode init_result = initializeServer();

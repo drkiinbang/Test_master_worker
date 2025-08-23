@@ -13,7 +13,7 @@ class RemoteWorkerManager {
 public:
     RemoteWorkerManager(const std::vector<RemoteWorkerConfig>& configs,
         const std::string& master_ip, int master_port,
-        const RuntimeSettings& settings);
+        const MasterSettings& settings);
 
     ~RemoteWorkerManager();
 
@@ -27,7 +27,7 @@ private:
     const std::vector<RemoteWorkerConfig> remote_configs_;
     const std::string master_ip_;
     const int master_port_;
-    const RuntimeSettings settings_;
+    const MasterSettings settings_;
 
     std::vector<std::thread> worker_threads_;
     std::atomic<bool> should_stop_{ false };
@@ -39,7 +39,7 @@ private:
 
 RemoteWorkerManager::RemoteWorkerManager(const std::vector<RemoteWorkerConfig>& configs,
     const std::string& master_ip, int master_port,
-    const RuntimeSettings& settings)
+    const MasterSettings& settings)
     : remote_configs_(configs), master_ip_(master_ip),
     master_port_(master_port), settings_(settings) {
 }
@@ -137,7 +137,7 @@ std::string RemoteWorkerManager::buildSSHCommand(const RemoteWorkerConfig& confi
     ssh_cmd << " \"" << config.username << "\"@\"" << config.ip_address << "\""
         << " \"\\\"" << config.worker_path << "\\\""
         << " worker " << master_ip_ << " " << master_port_
-        << " workers.conf\""
+        << " worker.config\""
         << " < NUL";
 #else
     ssh_cmd << "ssh -p " << config.ssh_port
@@ -156,7 +156,7 @@ std::string RemoteWorkerManager::buildSSHCommand(const RemoteWorkerConfig& confi
     ssh_cmd << " '" << config.username << "'@'" << config.ip_address << "'"
         << " '" << config.worker_path
         << " worker " << master_ip_ << " " << master_port_
-        << " workers.conf'";
+        << " worker.config'";
 #endif
 
     return ssh_cmd.str();

@@ -1,4 +1,4 @@
-﻿/// 스템 전체의 기반 정의
+﻿/// 시스템 전체의 기반 정의 (분리된 설정 구조 지원)
 /// 크로스 플랫폼 헤더 통합(Windows / Linux / macOS)
 /// 네트워크 상수 및 오류 코드 정의
 /// 핵심 데이터 구조(Point3D, PointCloudChunk, ProcessResult)
@@ -217,26 +217,4 @@ struct RemoteWorkerConfig {
     bool isValid() const {
         return !ip_address.empty() && !username.empty() && !worker_path.empty();
     }
-};
-
-struct RuntimeSettings {
-    // Master 설정
-    int drain_seconds = 5;
-    int master_starvation_seconds = 30;
-    int emergency_local_spawn_max = 3;
-    bool run_local_worker_on_master = true;
-
-    // Worker 설정
-    int worker_idle_timeout_seconds = 20;
-    int worker_retry_max = 5;
-    int worker_retry_backoff_ms = 200;
-    int worker_recv_timeout_ms = 5000;
-    int worker_send_timeout_ms = 5000;
-
-    // SSH 설정
-    int ssh_connect_timeout_sec = 5;
-    int ssh_server_alive_interval_sec = 5;
-    int ssh_server_alive_count_max = 2;
-    bool ssh_batch_mode = true;
-    std::string ssh_strict_host_key = "accept-new";
 };

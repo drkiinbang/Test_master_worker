@@ -4,20 +4,51 @@
 /// 원격 워커 정보 파싱
 /// 기본 설정 파일 자동 생성
 /// 주요기능 : 설정 기반 시스템 동작 제어
+
 #pragma once
 
 #include "Common.h"
 #include "ProcessUtils.h"
 
+// 마스터 전용 설정 구조체
+struct MasterSettings {
+    int drain_seconds = 5;
+    int master_starvation_seconds = 30;
+    int emergency_local_spawn_max = 3;
+    bool run_local_worker_on_master = true;
+
+    // SSH 설정
+    int ssh_connect_timeout_sec = 5;
+    int ssh_server_alive_interval_sec = 5;
+    int ssh_server_alive_count_max = 2;
+    bool ssh_batch_mode = true;
+    std::string ssh_strict_host_key = "accept-new";
+};
+
+// 워커 전용 설정 구조체
+struct WorkerSettings {
+    int worker_idle_timeout_seconds = 20;
+    int worker_retry_max = 5;
+    int worker_retry_backoff_ms = 200;
+    int worker_recv_timeout_ms = 5000;
+    int worker_send_timeout_ms = 5000;
+};
+
 class ConfigurationManager {
 public:
-    static bool ensureConfigExists(const std::string& config_file);
-    static RuntimeSettings loadRuntimeSettings(const std::string& config_file);
-    static std::vector<RemoteWorkerConfig> loadRemoteWorkers(const std::string& config_file);
-    static std::string getConfigPath(const std::string& config_file);
+    // 마스터 설정 관리
+    static bool ensureMasterConfigExists(const std::string& config_file = "master.config");
+    static MasterSettings loadMasterSettings(const std::string& config_file = "master.config");
+    static std::vector<RemoteWorkerConfig> loadRemoteWorkers(const std::string& config_file = "master.config");
+
+    // 워커 설정 관리
+    static bool ensureWorkerConfigExists(const std::string& config_file = "worker.config");
+    static WorkerSettings loadWorkerSettings(const std::string& config_file = "worker.config");
 
 private:
-    static void createDefaultConfig(const std::string& config_file);
+    static void createDefaultMasterConfig(const std::string& config_file);
+    static void createDefaultWorkerConfig(const std::string& config_file);
+    static std::string getConfigPath(const std::string& config_file);
     static std::string trim(const std::string& str);
     static std::vector<std::string> split(const std::string& str, char delimiter);
     static bool parseBoolValue(const std::string& value);
@@ -27,23 +58,55 @@ private:
 // ConfigurationManager 구현부
 //==============================================================================
 
-bool ConfigurationManager::ensureConfigExists(const std::string& config_file) {
+std::string ConfigurationManager::getConfigPath(const std::string& config_file) {
+    // 절대 경로인 경우 그대로 사용
+    if (config_file.find(':') != std::string::npos || config_file[0] == '/') {
+        return config_file;
+    }
+
+    // 상대 경로인 경우 실행파일 디렉토리 기준으로 변경
+    std::string exe_path = ProcessUtils::getSelfExecutablePath();
+    if (exe_path.empty()) {
+        return config_file;
+    }
+
+    // 실행파일 경로에서 디렉토리 부분만 추출
+    size_t last_slash = exe_path.find_last_of("/\\");
+    if (last_slash != std::string::npos) {
+        std::string exe_dir = exe_path.substr(0, last_slash + 1);
+        return exe_dir + config_file;
+    }
+
+    return config_file;
+}
+
+bool ConfigurationManager::ensureMasterConfigExists(const std::string& config_file) {
     std::string full_path = getConfigPath(config_file);
     std::ifstream file(full_path);
     if (!file.is_open()) {
-        createDefaultConfig(full_path);
+        createDefaultMasterConfig(full_path);
         return true;
     }
     return true;
 }
 
-RuntimeSettings ConfigurationManager::loadRuntimeSettings(const std::string& config_file) {
-    RuntimeSettings settings;
+bool ConfigurationManager::ensureWorkerConfigExists(const std::string& config_file) {
+    std::string full_path = getConfigPath(config_file);
+    std::ifstream file(full_path);
+    if (!file.is_open()) {
+        createDefaultWorkerConfig(full_path);
+        return true;
+    }
+    return true;
+}
+
+MasterSettings ConfigurationManager::loadMasterSettings(const std::string& config_file) {
+    MasterSettings settings;
     std::string full_path = getConfigPath(config_file);
     std::ifstream file(full_path);
 
     if (!file.is_open()) {
-        std::wcout << L"Using default settings (config file not found)\n";
+        std::wcout << L"Using default master settings (config file not found)\n";
         return settings;
     }
 
@@ -71,21 +134,6 @@ RuntimeSettings ConfigurationManager::loadRuntimeSettings(const std::string& con
             else if (key == "run_local_worker_on_master") {
                 settings.run_local_worker_on_master = parseBoolValue(value);
             }
-            else if (key == "worker_idle_timeout_seconds") {
-                settings.worker_idle_timeout_seconds = std::stoi(value);
-            }
-            else if (key == "worker_retry_max") {
-                settings.worker_retry_max = std::stoi(value);
-            }
-            else if (key == "worker_retry_backoff_ms") {
-                settings.worker_retry_backoff_ms = std::stoi(value);
-            }
-            else if (key == "worker_recv_timeout_ms") {
-                settings.worker_recv_timeout_ms = std::stoi(value);
-            }
-            else if (key == "worker_send_timeout_ms") {
-                settings.worker_send_timeout_ms = std::stoi(value);
-            }
             else if (key == "ssh_connect_timeout_sec") {
                 settings.ssh_connect_timeout_sec = std::stoi(value);
             }
@@ -103,7 +151,54 @@ RuntimeSettings ConfigurationManager::loadRuntimeSettings(const std::string& con
             }
         }
         catch (const std::exception& e) {
-            std::wcerr << L"Failed to parse config key '" << utf8_to_wstring(key)
+            std::wcerr << L"Failed to parse master config key '" << utf8_to_wstring(key)
+                << L"': " << utf8_to_wstring(e.what()) << L"\n";
+        }
+    }
+
+    return settings;
+}
+
+WorkerSettings ConfigurationManager::loadWorkerSettings(const std::string& config_file) {
+    WorkerSettings settings;
+    std::string full_path = getConfigPath(config_file);
+    std::ifstream file(full_path);
+
+    if (!file.is_open()) {
+        std::wcout << L"Using default worker settings (config file not found)\n";
+        return settings;
+    }
+
+    std::string line;
+    while (std::getline(file, line)) {
+        line = trim(line);
+        if (line.empty() || line[0] == '#' || line.find('=') == std::string::npos) {
+            continue;
+        }
+
+        size_t eq_pos = line.find('=');
+        std::string key = trim(line.substr(0, eq_pos));
+        std::string value = trim(line.substr(eq_pos + 1));
+
+        try {
+            if (key == "worker_idle_timeout_seconds") {
+                settings.worker_idle_timeout_seconds = std::stoi(value);
+            }
+            else if (key == "worker_retry_max") {
+                settings.worker_retry_max = std::stoi(value);
+            }
+            else if (key == "worker_retry_backoff_ms") {
+                settings.worker_retry_backoff_ms = std::stoi(value);
+            }
+            else if (key == "worker_recv_timeout_ms") {
+                settings.worker_recv_timeout_ms = std::stoi(value);
+            }
+            else if (key == "worker_send_timeout_ms") {
+                settings.worker_send_timeout_ms = std::stoi(value);
+            }
+        }
+        catch (const std::exception& e) {
+            std::wcerr << L"Failed to parse worker config key '" << utf8_to_wstring(key)
                 << L"': " << utf8_to_wstring(e.what()) << L"\n";
         }
     }
@@ -117,7 +212,7 @@ std::vector<RemoteWorkerConfig> ConfigurationManager::loadRemoteWorkers(const st
     std::ifstream file(full_path);
 
     if (!file.is_open()) {
-        std::wcout << L"Config file not found. Running with local workers only.\n";
+        std::wcout << L"Master config file not found. Running with local workers only.\n";
         return workers;
     }
 
@@ -155,60 +250,79 @@ std::vector<RemoteWorkerConfig> ConfigurationManager::loadRemoteWorkers(const st
     return workers;
 }
 
-std::string ConfigurationManager::getConfigPath(const std::string& config_file) {
-    // 절대 경로인 경우 그대로 사용
-    if (config_file.find(':') != std::string::npos || config_file[0] == '/') {
-        return config_file;
-    }
-
-    // 상대 경로인 경우 실행파일 디렉토리 기준으로 변경
-    std::string exe_path = ProcessUtils::getSelfExecutablePath();
-    if (exe_path.empty()) {
-        return config_file;  // 실패시 원래 경로 사용
-    }
-
-    // 실행파일 경로에서 디렉토리 부분만 추출
-    size_t last_slash = exe_path.find_last_of("/\\");
-    if (last_slash != std::string::npos) {
-        std::string exe_dir = exe_path.substr(0, last_slash + 1);
-        return exe_dir + config_file;
-    }
-
-    return config_file;
-}
-
-void ConfigurationManager::createDefaultConfig(const std::string& config_file) {
-    std::string full_path = getConfigPath(config_file);
-    std::ofstream file(full_path);
+void ConfigurationManager::createDefaultMasterConfig(const std::string& config_file) {
+    std::ofstream file(config_file);
     if (!file.is_open()) {
-        std::wcerr << L"Failed to create config file: " << utf8_to_wstring(full_path) << L"\n";
+        std::wcerr << L"Failed to create master config file: " << utf8_to_wstring(config_file) << L"\n";
         return;
     }
 
-    file << "# Point Cloud Distributed Processing System Configuration\n"
-        << "# Lines with commas are remote workers: ip,username,worker_path,ssh_port\n"
-        << "# Lines with key=value are runtime settings\n\n"
-        << "# ===== Master Settings =====\n"
-        << "drain_seconds=5\n"
-        << "master_starvation_seconds=30\n"
-        << "emergency_local_spawn_max=3\n"
+    file << "# Master Server Configuration\n"
+        << "# Point Cloud Distributed Processing System - Master Settings\n"
+        << "# ==============================================================================\n\n"
+        << "# ===== Master Server Settings =====\n\n"
+        << "# drain_seconds: Wait time after all chunks processed (seconds)\n"
+        << "drain_seconds=5\n\n"
+        << "# master_starvation_seconds: Time before spawning emergency workers (seconds)\n"
+        << "master_starvation_seconds=30\n\n"
+        << "# emergency_local_spawn_max: Maximum emergency workers to spawn\n"
+        << "emergency_local_spawn_max=3\n\n"
+        << "# run_local_worker_on_master: Auto-start local worker on master startup\n"
         << "run_local_worker_on_master=true\n\n"
-        << "# ===== Worker Settings =====\n"
-        << "worker_idle_timeout_seconds=20\n"
-        << "worker_retry_max=5\n"
-        << "worker_retry_backoff_ms=200\n"
-        << "worker_recv_timeout_ms=5000\n"
-        << "worker_send_timeout_ms=5000\n\n"
-        << "# ===== SSH Settings =====\n"
-        << "ssh_connect_timeout_sec=5\n"
-        << "ssh_server_alive_interval_sec=5\n"
-        << "ssh_server_alive_count_max=2\n"
-        << "ssh_batch_mode=yes\n"
+        << "# ===== SSH Remote Connection Settings =====\n\n"
+        << "# ssh_connect_timeout_sec: SSH connection timeout (seconds)\n"
+        << "ssh_connect_timeout_sec=5\n\n"
+        << "# ssh_server_alive_interval_sec: SSH keepalive interval (seconds)\n"
+        << "ssh_server_alive_interval_sec=5\n\n"
+        << "# ssh_server_alive_count_max: Max SSH keepalive failures\n"
+        << "ssh_server_alive_count_max=2\n\n"
+        << "# ssh_batch_mode: Use key-based authentication only\n"
+        << "ssh_batch_mode=true\n\n"
+        << "# ssh_strict_host_key: Host key verification policy\n"
         << "ssh_strict_host_key=accept-new\n\n"
-        << "# ===== Remote Workers (Examples) =====\n"
-        << "# Format: ip,username,worker_path[,ssh_port]\n"
-        << "#192.168.1.100,user,/path/to/worker,22\n"
-        << "#192.168.1.101,user,C:\\Workers\\worker.exe,22\n";
+        << "# ===== Remote Workers Configuration =====\n"
+        << "# Format: ip_address,username,worker_executable_path[,ssh_port]\n\n"
+        << "# Examples (uncomment and modify for your environment):\n"
+        << "#192.168.1.100,ubuntu,/home/ubuntu/DistributedPCProcess,22\n"
+        << "#192.168.1.101,worker,/opt/pointcloud/worker,22\n"
+        << "#192.168.1.200,Administrator,C:\\Workers\\DistributedPCProcess.exe,22\n";
+
+    std::wcout << L"Created default master config: " << utf8_to_wstring(config_file) << L"\n";
+}
+
+void ConfigurationManager::createDefaultWorkerConfig(const std::string& config_file) {
+    std::ofstream file(config_file);
+    if (!file.is_open()) {
+        std::wcerr << L"Failed to create worker config file: " << utf8_to_wstring(config_file) << L"\n";
+        return;
+    }
+
+    file << "# Worker Configuration\n"
+        << "# Point Cloud Distributed Processing System - Worker Settings\n"
+        << "# ==============================================================================\n\n"
+        << "# ===== Worker Settings =====\n\n"
+        << "# worker_idle_timeout_seconds: Worker idle timeout (seconds)\n"
+        << "# Terminates worker if no work received within this time\n"
+        << "worker_idle_timeout_seconds=20\n\n"
+        << "# worker_retry_max: Maximum connection retry attempts\n"
+        << "# How many times to retry connecting to master server\n"
+        << "worker_retry_max=5\n\n"
+        << "# worker_retry_backoff_ms: Retry backoff interval (milliseconds)\n"
+        << "# Wait time between retries (multiplied by attempt number)\n"
+        << "worker_retry_backoff_ms=200\n\n"
+        << "# worker_recv_timeout_ms: Data receive timeout (milliseconds)\n"
+        << "# Maximum time to wait for data from master\n"
+        << "worker_recv_timeout_ms=5000\n\n"
+        << "# worker_send_timeout_ms: Data send timeout (milliseconds)\n"
+        << "# Maximum time to wait when sending results to master\n"
+        << "worker_send_timeout_ms=5000\n\n"
+        << "# ===== Performance Tuning Guide =====\n"
+        << "# Fast network: Reduce timeout values (3000ms or less)\n"
+        << "# Slow network: Increase timeout values (10000ms or more)\n"
+        << "# Unstable connection: Increase retry_max and backoff_ms\n"
+        << "# Debug mode: Increase all timeout values for easier debugging\n";
+
+    std::wcout << L"Created default worker config: " << utf8_to_wstring(config_file) << L"\n";
 }
 
 std::string ConfigurationManager::trim(const std::string& str) {

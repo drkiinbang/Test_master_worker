@@ -10,11 +10,12 @@
 #include "Common.h"
 #include "NetworkUtils.h"
 #include "ChunkProcessor.h"
+#include "ConfigurationManager.h"
 
 class WorkerClient {
 public:
     WorkerClient(const std::string& master_ip, int master_port,
-        const RuntimeSettings& settings);
+        const std::string& config_file = "worker.config");
 
     ErrorCode start();
     void stop();
@@ -25,7 +26,9 @@ private:
 
     const std::string master_ip_;
     const int master_port_;
-    const RuntimeSettings settings_;
+    const std::string config_file_;
+
+    WorkerSettings settings_;
     std::atomic<bool> should_stop_{ false };
     bool last_was_terminate_{ false };
     int consecutive_failures_{ 0 };
@@ -37,9 +40,18 @@ private:
 //==============================================================================
 
 WorkerClient::WorkerClient(const std::string& master_ip, int master_port,
-    const RuntimeSettings& settings)
-    : master_ip_(master_ip), master_port_(master_port), settings_(settings),
+    const std::string& config_file)
+    : master_ip_(master_ip), master_port_(master_port), config_file_(config_file),
     last_success_(std::chrono::steady_clock::now()) {
+
+    // 설정 파일 로드
+    if (!ConfigurationManager::ensureWorkerConfigExists(config_file_)) {
+        // 기본 설정 사용
+        settings_ = WorkerSettings{};
+    }
+    else {
+        settings_ = ConfigurationManager::loadWorkerSettings(config_file_);
+    }
 }
 
 ErrorCode WorkerClient::start() {

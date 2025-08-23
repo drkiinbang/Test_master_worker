@@ -1,0 +1,77 @@
+﻿# ===== 성능별 설정 가이드 =====
+#
+# Fast, stable network environment:
+# - worker_recv_timeout_ms=3000
+# - worker_send_timeout_ms=3000
+# - worker_idle_timeout_seconds=15
+# - worker_retry_max=3
+# - worker_retry_backoff_ms=100
+#
+# Slow or unstable network environment:
+# - worker_recv_timeout_ms=10000
+# - worker_send_timeout_ms=10000
+# - worker_idle_timeout_seconds=60
+# - worker_retry_max=10
+# - worker_retry_backoff_ms=1000
+#
+# Debug/Development environment:
+# - worker_recv_timeout_ms=30000
+# - worker_send_timeout_ms=30000
+# - worker_idle_timeout_seconds=300
+# - worker_retry_max=3
+# - worker_retry_backoff_ms=1000
+#
+# High-performance environment (many workers):
+# - worker_idle_timeout_seconds=10
+# - worker_retry_max=3
+# - Lower timeout values for faster turnover
+#
+# Resource-constrained environment:
+# - Higher timeout values to reduce CPU usage from retries
+# - worker_retry_max=5-7 (moderate retry attempts)
+
+# ===== Troubleshooting Guide =====
+#
+# Worker disconnects frequently:
+# - Increase worker_recv_timeout_ms and worker_send_timeout_ms
+# - Increase worker_idle_timeout_seconds
+# - Check network stability
+#
+# Worker takes too long to connect:
+# - Decrease worker_retry_backoff_ms
+# - Check master server availability
+# - Verify network connectivity
+#
+# Worker gives up too quickly:
+# - Increase worker_retry_max
+# - Increase worker_idle_timeout_seconds
+# - Check master server load
+#
+# Too many connection attempts:
+# - Decrease worker_retry_max
+# - Increase worker_retry_backoff_ms
+# - Check master server capacity
+
+# ===== Network Environment Examples =====
+#
+# Local network (same subnet):
+# worker_recv_timeout_ms=2000
+# worker_send_timeout_ms=2000
+# worker_retry_backoff_ms=100
+#
+# Wide area network (different cities):
+# worker_recv_timeout_ms=8000
+# worker_send_timeout_ms=8000
+# worker_retry_backoff_ms=500
+#
+# Internet/Cloud environment:
+# worker_recv_timeout_ms=10000
+# worker_send_timeout_ms=10000
+# worker_retry_backoff_ms=1000
+# worker_retry_max=7
+#
+# Satellite or high-latency connection:
+# worker_recv_timeout_ms=20000
+# worker_send_timeout_ms=20000
+# worker_idle_timeout_seconds=120
+# worker_retry_backoff_ms=2000

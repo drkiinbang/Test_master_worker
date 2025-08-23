@@ -22,17 +22,27 @@ public:
 
 private:
     bool connectAndProcessSingle();
+    void startHeartbeatThread();
+    void stopHeartbeatThread();
+    void sendHeartbeatLoop();
     SOCKET createConnection();
+    std::string generateWorkerId();
 
     const std::string master_ip_;
     const int master_port_;
     const std::string config_file_;
 
+    std::string worker_id_;
     WorkerSettings settings_;
     std::atomic<bool> should_stop_{ false };
-    bool last_was_terminate_{ false };
+    std::atomic<bool> last_was_terminate_{ false };
+    std::atomic<int> processed_chunks_{ 0 };
     int consecutive_failures_{ 0 };
     std::chrono::steady_clock::time_point last_success_;
+
+    // 하트비트 관련
+    std::thread heartbeat_thread_;
+    std::atomic<bool> heartbeat_should_stop_{ false };
 };
 
 //==============================================================================
@@ -44,9 +54,11 @@ WorkerClient::WorkerClient(const std::string& master_ip, int master_port,
     : master_ip_(master_ip), master_port_(master_port), config_file_(config_file),
     last_success_(std::chrono::steady_clock::now()) {
 
+    // 워커 ID 생성
+    worker_id_ = generateWorkerId();
+
     // 설정 파일 로드
     if (!ConfigurationManager::ensureWorkerConfigExists(config_file_)) {
-        // 기본 설정 사용
         settings_ = WorkerSettings{};
     }
     else {
@@ -54,15 +66,21 @@ WorkerClient::WorkerClient(const std::string& master_ip, int master_port,
     }
 }
 
+
 ErrorCode WorkerClient::start() {
-    std::wcout << L"Worker connecting to " << utf8_to_wstring(master_ip_)
-        << L":" << master_port_ << L"\n";
+    std::wcout << L"Worker " << utf8_to_wstring(worker_id_) << L" connecting to "
+        << utf8_to_wstring(master_ip_) << L":" << master_port_ << L"\n";
+
+    // 하트비트 스레드 시작
+    if (settings_.send_heartbeat) {
+        startHeartbeatThread();
+    }
 
     while (!should_stop_) {
         if (!connectAndProcessSingle()) {
             if (last_was_terminate_) {
                 std::wcout << L"Worker terminated by master\n";
-                return ErrorCode::SUCCESS;
+                break;
             }
 
             auto now = std::chrono::steady_clock::now();
@@ -72,7 +90,7 @@ ErrorCode WorkerClient::start() {
             if (idle_duration >= settings_.worker_idle_timeout_seconds ||
                 ++consecutive_failures_ >= settings_.worker_retry_max) {
                 std::wcout << L"Worker timeout or max retries reached. Exiting.\n";
-                return ErrorCode::TIMEOUT;
+                break;
             }
 
             int backoff_ms = settings_.worker_retry_backoff_ms * consecutive_failures_;
@@ -82,10 +100,52 @@ ErrorCode WorkerClient::start() {
 
         consecutive_failures_ = 0;
         last_success_ = std::chrono::steady_clock::now();
+        processed_chunks_++;
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
 
+    stopHeartbeatThread();
     return ErrorCode::SUCCESS;
+}
+
+void WorkerClient::startHeartbeatThread() {
+    heartbeat_should_stop_ = false;
+    heartbeat_thread_ = std::thread(&WorkerClient::sendHeartbeatLoop, this);
+}
+
+void WorkerClient::stopHeartbeatThread() {
+    heartbeat_should_stop_ = true;
+    if (heartbeat_thread_.joinable()) {
+        heartbeat_thread_.join();
+    }
+}
+
+void WorkerClient::sendHeartbeatLoop() {
+    while (!heartbeat_should_stop_) {
+        RAIISocket socket(createConnection());
+        if (socket.valid()) {
+            HeartbeatMessage heartbeat;
+            heartbeat.worker_id = worker_id_;
+            heartbeat.status = consecutive_failures_ == 0 ? WorkerStatus::ACTIVE : WorkerStatus::IDLE;
+            heartbeat.processed_chunks = processed_chunks_.load();
+
+            NetworkUtils::sendHeartbeat(socket.get(), heartbeat);
+        }
+
+        for (int i = 0; i < settings_.heartbeat_interval_seconds && !heartbeat_should_stop_; ++i) {
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+        }
+    }
+}
+
+std::string WorkerClient::generateWorkerId() {
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<> dis(100000, 999999);
+
+    std::ostringstream oss;
+    oss << "worker_" << dis(gen);
+    return oss.str();
 }
 
 void WorkerClient::stop() {
@@ -99,13 +159,23 @@ bool WorkerClient::connectAndProcessSingle() {
     }
 
     try {
-        std::string received_data = NetworkUtils::receiveData(socket.get());
-        if (received_data.empty()) {
+        // 작업 요청 메시지 전송 (빈 데이터로 작업 요청)
+        if (!NetworkUtils::sendMessage(socket.get(), MessageType::CHUNK_DATA, "")) {
             return false;
         }
 
-        if (NetworkUtils::isTerminationSignal(received_data)) {
+        MessageType msg_type;
+        std::string received_data;
+        if (!NetworkUtils::receiveMessage(socket.get(), msg_type, received_data)) {
+            return false;
+        }
+
+        if (msg_type == MessageType::TERMINATION) {
             last_was_terminate_ = true;
+            return false;
+        }
+
+        if (msg_type != MessageType::CHUNK_DATA) {
             return false;
         }
 
@@ -115,7 +185,7 @@ bool WorkerClient::connectAndProcessSingle() {
 
         ProcessResult result = ChunkProcessor::processChunk(chunk);
 
-        if (!NetworkUtils::sendData(socket.get(), result.serialize())) {
+        if (!NetworkUtils::sendMessage(socket.get(), MessageType::CHUNK_RESULT, result.serialize())) {
             return false;
         }
 

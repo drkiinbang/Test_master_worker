@@ -23,6 +23,15 @@ struct MasterSettings {
     int ssh_server_alive_count_max = 2;
     bool ssh_batch_mode = true;
     std::string ssh_strict_host_key = "accept-new";
+
+    // 워커 모니터링 설정 (새로 추가)
+    int heartbeat_interval_seconds = 10;
+    int heartbeat_timeout_seconds = 30;
+    int max_restart_attempts = 3;
+    int restart_cooldown_seconds = 15;
+    bool monitor_local_workers = true;
+    bool monitor_remote_workers = true;
+    bool auto_restart_failed_workers = true;
 };
 
 // 워커 전용 설정 구조체
@@ -32,6 +41,10 @@ struct WorkerSettings {
     int worker_retry_backoff_ms = 200;
     int worker_recv_timeout_ms = 5000;
     int worker_send_timeout_ms = 5000;
+
+    // 하트비트 설정 (새로 추가)
+    int heartbeat_interval_seconds = 10;
+    bool send_heartbeat = true;
 };
 
 class ConfigurationManager {
@@ -134,6 +147,29 @@ MasterSettings ConfigurationManager::loadMasterSettings(const std::string& confi
             else if (key == "run_local_worker_on_master") {
                 settings.run_local_worker_on_master = parseBoolValue(value);
             }
+            // 새로 추가된 모니터링 설정들
+            else if (key == "heartbeat_interval_seconds") {
+                settings.heartbeat_interval_seconds = std::stoi(value);
+            }
+            else if (key == "heartbeat_timeout_seconds") {
+                settings.heartbeat_timeout_seconds = std::stoi(value);
+            }
+            else if (key == "max_restart_attempts") {
+                settings.max_restart_attempts = std::stoi(value);
+            }
+            else if (key == "restart_cooldown_seconds") {
+                settings.restart_cooldown_seconds = std::stoi(value);
+            }
+            else if (key == "monitor_local_workers") {
+                settings.monitor_local_workers = parseBoolValue(value);
+            }
+            else if (key == "monitor_remote_workers") {
+                settings.monitor_remote_workers = parseBoolValue(value);
+            }
+            else if (key == "auto_restart_failed_workers") {
+                settings.auto_restart_failed_workers = parseBoolValue(value);
+            }
+            // SSH 설정들
             else if (key == "ssh_connect_timeout_sec") {
                 settings.ssh_connect_timeout_sec = std::stoi(value);
             }
@@ -195,6 +231,13 @@ WorkerSettings ConfigurationManager::loadWorkerSettings(const std::string& confi
             }
             else if (key == "worker_send_timeout_ms") {
                 settings.worker_send_timeout_ms = std::stoi(value);
+            }
+            // 새로 추가된 하트비트 설정들
+            else if (key == "heartbeat_interval_seconds") {
+                settings.heartbeat_interval_seconds = std::stoi(value);
+            }
+            else if (key == "send_heartbeat") {
+                settings.send_heartbeat = parseBoolValue(value);
             }
         }
         catch (const std::exception& e) {
@@ -269,6 +312,21 @@ void ConfigurationManager::createDefaultMasterConfig(const std::string& config_f
         << "emergency_local_spawn_max=3\n\n"
         << "# run_local_worker_on_master: Auto-start local worker on master startup\n"
         << "run_local_worker_on_master=true\n\n"
+        << "# ===== Worker Monitoring Settings =====\n\n"
+        << "# heartbeat_interval_seconds: Expected heartbeat interval from workers\n"
+        << "heartbeat_interval_seconds=10\n\n"
+        << "# heartbeat_timeout_seconds: Timeout before marking worker as failed\n"
+        << "heartbeat_timeout_seconds=30\n\n"
+        << "# max_restart_attempts: Maximum worker restart attempts\n"
+        << "max_restart_attempts=3\n\n"
+        << "# restart_cooldown_seconds: Cooldown between restart attempts\n"
+        << "restart_cooldown_seconds=15\n\n"
+        << "# monitor_local_workers: Monitor locally spawned workers\n"
+        << "monitor_local_workers=true\n\n"
+        << "# monitor_remote_workers: Monitor remote workers\n"
+        << "monitor_remote_workers=true\n\n"
+        << "# auto_restart_failed_workers: Automatically restart failed workers\n"
+        << "auto_restart_failed_workers=true\n\n"
         << "# ===== SSH Remote Connection Settings =====\n\n"
         << "# ssh_connect_timeout_sec: SSH connection timeout (seconds)\n"
         << "ssh_connect_timeout_sec=5\n\n"
@@ -302,20 +360,20 @@ void ConfigurationManager::createDefaultWorkerConfig(const std::string& config_f
         << "# ==============================================================================\n\n"
         << "# ===== Worker Settings =====\n\n"
         << "# worker_idle_timeout_seconds: Worker idle timeout (seconds)\n"
-        << "# Terminates worker if no work received within this time\n"
         << "worker_idle_timeout_seconds=20\n\n"
         << "# worker_retry_max: Maximum connection retry attempts\n"
-        << "# How many times to retry connecting to master server\n"
         << "worker_retry_max=5\n\n"
         << "# worker_retry_backoff_ms: Retry backoff interval (milliseconds)\n"
-        << "# Wait time between retries (multiplied by attempt number)\n"
         << "worker_retry_backoff_ms=200\n\n"
         << "# worker_recv_timeout_ms: Data receive timeout (milliseconds)\n"
-        << "# Maximum time to wait for data from master\n"
         << "worker_recv_timeout_ms=5000\n\n"
         << "# worker_send_timeout_ms: Data send timeout (milliseconds)\n"
-        << "# Maximum time to wait when sending results to master\n"
         << "worker_send_timeout_ms=5000\n\n"
+        << "# ===== Heartbeat Settings =====\n\n"
+        << "# heartbeat_interval_seconds: Heartbeat send interval (seconds)\n"
+        << "heartbeat_interval_seconds=10\n\n"
+        << "# send_heartbeat: Enable heartbeat sending to master\n"
+        << "send_heartbeat=true\n\n"
         << "# ===== Performance Tuning Guide =====\n"
         << "# Fast network: Reduce timeout values (3000ms or less)\n"
         << "# Slow network: Increase timeout values (10000ms or more)\n"

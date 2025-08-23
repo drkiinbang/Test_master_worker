@@ -15,6 +15,7 @@
 #include "ConfigurationManager.h"
 #include "ProcessUtils.h"
 #include "RemoteWorkerManager.h"
+#include "WorkerMonitor.h"
 
 class MasterServer {
 public:
@@ -29,10 +30,17 @@ private:
     ErrorCode initializeServer();
     ErrorCode runAcceptLoop();
     void handleWorkerConnection(SOCKET client_socket, const std::string& client_ip);
+    void handleWorkerMessage(SOCKET socket, const std::string& client_ip);
+    void processHeartbeat(const std::string& data, const std::string& client_ip);
+
     void startLocalWorkerIfNeeded();
     void checkStarvationAndSpawnEmergencyWorker();
     void enterDrainingPhase();
     void printFinalResults() const;
+
+    // 워커 재시작 콜백
+    void restartLocalWorker(const std::string& worker_id);
+    void restartRemoteWorker(const RemoteWorkerConfig& config);
 
     const int port_;
     const std::string config_file_;
@@ -42,6 +50,7 @@ private:
 
     std::unique_ptr<WorkDistributor> work_distributor_;
     std::unique_ptr<RemoteWorkerManager> remote_manager_;
+    std::unique_ptr<WorkerMonitor> worker_monitor_;  // 새로 추가
 
     mutable std::mutex results_mutex_;
     std::vector<ProcessResult> results_;
@@ -84,6 +93,23 @@ ErrorCode MasterServer::start() {
         return init_result;
     }
 
+    // 워커 모니터링 시작
+    MonitorSettings monitor_settings;
+    monitor_settings.heartbeat_interval_seconds = settings_.heartbeat_interval_seconds;
+    monitor_settings.heartbeat_timeout_seconds = settings_.heartbeat_timeout_seconds;
+    monitor_settings.max_restart_attempts = settings_.max_restart_attempts;
+    monitor_settings.restart_cooldown_seconds = settings_.restart_cooldown_seconds;
+    monitor_settings.monitor_local_workers = settings_.monitor_local_workers;
+    monitor_settings.monitor_remote_workers = settings_.monitor_remote_workers;
+    monitor_settings.auto_restart_failed_workers = settings_.auto_restart_failed_workers;
+
+    worker_monitor_ = std::make_unique<WorkerMonitor>(monitor_settings);
+    worker_monitor_->setRestartCallbacks(
+        [this](const std::string& worker_id) { restartLocalWorker(worker_id); },
+        [this](const RemoteWorkerConfig& config) { restartRemoteWorker(config); }
+    );
+    worker_monitor_->start();
+
     if (settings_.run_local_worker_on_master) {
         startLocalWorkerIfNeeded();
     }
@@ -107,9 +133,15 @@ ErrorCode MasterServer::start() {
 
 void MasterServer::stop() {
     should_stop_ = true;
+
+    if (worker_monitor_) {
+        worker_monitor_->stop();
+    }
+
     if (remote_manager_) {
         remote_manager_->stop();
     }
+
     if (server_socket_ != INVALID_SOCKET) {
         closesocket(server_socket_);
         server_socket_ = INVALID_SOCKET;
@@ -202,6 +234,37 @@ ErrorCode MasterServer::runAcceptLoop() {
 }
 
 void MasterServer::handleWorkerConnection(SOCKET client_socket, const std::string& client_ip) {
+    RAIISocket socket(client_socket);
+
+    try {
+        MessageType msg_type;
+        std::string msg_data;
+
+        if (!NetworkUtils::receiveMessage(socket.get(), msg_type, msg_data)) {
+            return;
+        }
+
+        switch (msg_type) {
+        case MessageType::HEARTBEAT:
+            processHeartbeat(msg_data, client_ip);
+            break;
+
+        case MessageType::CHUNK_DATA:
+            // 기존 청크 처리 로직을 여기로 이동
+            handleWorkerMessage(socket.release(), client_ip);
+            break;
+
+        default:
+            std::wcout << L"Unknown message type from worker\n";
+            break;
+        }
+    }
+    catch (const std::exception& e) {
+        std::wcerr << L"Error handling worker connection: " << utf8_to_wstring(e.what()) << L"\n";
+    }
+}
+
+void MasterServer::handleWorkerMessage(SOCKET client_socket, const std::string& client_ip) {
     std::wcout << L"Worker connected: " << utf8_to_wstring(client_ip) << L"\n";
 
     RAIISocket socket(client_socket);
@@ -219,7 +282,7 @@ void MasterServer::handleWorkerConnection(SOCKET client_socket, const std::strin
         const PointCloudChunk& chunk = work_distributor_->getChunk(chunk_id);
         std::string chunk_data = chunk.serialize();
 
-        if (!NetworkUtils::sendData(socket.get(), chunk_data)) {
+        if (!NetworkUtils::sendMessage(socket.get(), MessageType::CHUNK_DATA, chunk_data)) {
             std::wcout << L"Failed to send chunk " << chunk_id << L"\n";
             work_distributor_->requeueChunk(chunk_id);
             return;
@@ -227,8 +290,10 @@ void MasterServer::handleWorkerConnection(SOCKET client_socket, const std::strin
 
         std::wcout << L"Sent chunk " << chunk_id << L" to worker\n";
 
-        std::string result_data = NetworkUtils::receiveData(socket.get());
-        if (result_data.empty()) {
+        MessageType response_type;
+        std::string result_data;
+        if (!NetworkUtils::receiveMessage(socket.get(), response_type, result_data) ||
+            response_type != MessageType::CHUNK_RESULT) {
             std::wcout << L"Worker disconnected before sending result\n";
             work_distributor_->requeueChunk(chunk_id);
             return;
@@ -255,6 +320,24 @@ void MasterServer::handleWorkerConnection(SOCKET client_socket, const std::strin
     }
 }
 
+void MasterServer::processHeartbeat(const std::string& data, const std::string& client_ip) {
+    try {
+        HeartbeatMessage heartbeat = HeartbeatMessage::deserialize(data);
+
+        if (worker_monitor_) {
+            worker_monitor_->updateHeartbeat(heartbeat.worker_id, heartbeat);
+        }
+
+        std::wcout << L"Heartbeat from " << utf8_to_wstring(heartbeat.worker_id)
+            << L" (" << utf8_to_wstring(client_ip) << L") - "
+            << L"Status: " << static_cast<int>(heartbeat.status)
+            << L", Processed: " << heartbeat.processed_chunks << L"\n";
+    }
+    catch (const std::exception& e) {
+        std::wcerr << L"Error processing heartbeat: " << utf8_to_wstring(e.what()) << L"\n";
+    }
+}
+
 void MasterServer::startLocalWorkerIfNeeded() {
     std::string exe_path = ProcessUtils::getSelfExecutablePath();
     if (exe_path.empty()) {
@@ -265,9 +348,34 @@ void MasterServer::startLocalWorkerIfNeeded() {
     ErrorCode result = ProcessUtils::startLocalWorkerNewWindow(exe_path, "127.0.0.1", port_);
     if (result == ErrorCode::SUCCESS) {
         Logger::info(L"Local worker started successfully");
+
+        // 모니터링 시스템에 로컬 워커 등록
+        if (worker_monitor_) {
+            std::string worker_id = "local_worker_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+            worker_monitor_->registerWorker(worker_id, "127.0.0.1", port_, WorkerType::LOCAL_AUTO);
+        }
     }
     else {
         Logger::warn(L"Failed to start local worker");
+    }
+}
+
+void MasterServer::restartLocalWorker(const std::string& worker_id) {
+    std::wcout << L"Restarting local worker: " << utf8_to_wstring(worker_id) << L"\n";
+    startLocalWorkerIfNeeded();
+}
+
+void MasterServer::restartRemoteWorker(const RemoteWorkerConfig& config) {
+    std::wcout << L"Restarting remote worker: " << utf8_to_wstring(config.ip_address) << L"\n";
+
+    // 원격 워커 매니저를 통해 특정 워커 재시작
+    if (remote_manager_) {
+        // RemoteWorkerManager에 개별 워커 재시작 기능이 필요함
+        // 현재는 간단히 새로운 임시 매니저로 처리
+        std::vector<RemoteWorkerConfig> single_config = { config };
+        auto temp_manager = std::make_unique<RemoteWorkerManager>(
+            single_config, NetworkUtils::getLocalIPAddress(), port_, settings_);
+        temp_manager->startRemoteWorkers();
     }
 }
 

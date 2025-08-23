@@ -147,6 +147,7 @@
     <ClInclude Include="ProcessUtils.h" />
     <ClInclude Include="RemoteWorkerManager.h" />
     <ClInclude Include="WorkerClient.h" />
+    <ClInclude Include="WorkerMonitor.h" />
   </ItemGroup>
   <ItemGroup>
     <Text Include="설정 가이드.txt" />

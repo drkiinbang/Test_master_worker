@@ -62,10 +62,17 @@ class NetworkUtils {
 public:
     static constexpr uint32_t TERMINATION_MAGIC = 0xDEADBEEF;
 
+    // 기존 함수들
     static bool sendData(SOCKET socket, const std::string& data);
     static std::string receiveData(SOCKET socket);
     static bool sendTerminationSignal(SOCKET socket);
     static bool isTerminationSignal(const std::string& data);
+
+    // 새로 추가된 함수들
+    static bool sendMessage(SOCKET socket, MessageType type, const std::string& data);
+    static bool receiveMessage(SOCKET socket, MessageType& type, std::string& data);
+    static bool sendHeartbeat(SOCKET socket, const HeartbeatMessage& heartbeat);
+
     static bool setSocketTimeouts(SOCKET socket, int recv_timeout_ms, int send_timeout_ms);
     static bool setReuseAddress(SOCKET socket);
     static std::string getLocalIPAddress();
@@ -225,4 +232,44 @@ bool NetworkUtils::receiveAll(SOCKET socket, char* buffer, size_t size) {
         total_received += received;
     }
     return true;
+}
+
+bool NetworkUtils::sendMessage(SOCKET socket, MessageType type, const std::string& data) {
+    // 메시지 헤더: [타입(1바이트)] [크기(4바이트)] [데이터]
+    uint8_t msg_type = static_cast<uint8_t>(type);
+    uint32_t size = static_cast<uint32_t>(data.size());
+
+    if (!sendAll(socket, reinterpret_cast<const char*>(&msg_type), sizeof(msg_type))) {
+        return false;
+    }
+
+    if (!sendAll(socket, reinterpret_cast<const char*>(&size), sizeof(size))) {
+        return false;
+    }
+
+    return sendAll(socket, data.data(), data.size());
+}
+
+bool NetworkUtils::receiveMessage(SOCKET socket, MessageType& type, std::string& data) {
+    uint8_t msg_type;
+    if (!receiveAll(socket, reinterpret_cast<char*>(&msg_type), sizeof(msg_type))) {
+        return false;
+    }
+
+    uint32_t size;
+    if (!receiveAll(socket, reinterpret_cast<char*>(&size), sizeof(size))) {
+        return false;
+    }
+
+    data.resize(size);
+    if (!receiveAll(socket, &data[0], size)) {
+        return false;
+    }
+
+    type = static_cast<MessageType>(msg_type);
+    return true;
+}
+
+bool NetworkUtils::sendHeartbeat(SOCKET socket, const HeartbeatMessage& heartbeat) {
+    return sendMessage(socket, MessageType::HEARTBEAT, heartbeat.serialize());
 }

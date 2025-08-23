@@ -60,6 +60,7 @@ typedef int socklen_t;
 #include <random>
 #include <iomanip>
 #include <deque>
+#include <functional>
 
 // UTF-8 변환을 위한 헤더 - 경고 억제
 #define _SILENCE_CXX17_CODECVT_HEADER_DEPRECATION_WARNING 1
@@ -68,8 +69,8 @@ typedef int socklen_t;
 
 // 네트워크 상수
 constexpr int DEFAULT_PORT = 8080;
-constexpr int MAX_CHUNK_SIZE = 1000;
-constexpr int DEFAULT_CHUNK_COUNT = 100;
+constexpr int MAX_CHUNK_SIZE = 100000;
+constexpr int DEFAULT_CHUNK_COUNT = 20;
 
 // 오류 코드
 enum class ErrorCode {
@@ -78,6 +79,75 @@ enum class ErrorCode {
     INVALID_DATA = 2,
     TIMEOUT = 3,
     CONFIGURATION_ERROR = 4
+};
+
+enum class MessageType : uint8_t {
+    CHUNK_DATA = 0x01,
+    CHUNK_RESULT = 0x02,
+    HEARTBEAT = 0x03,
+    TERMINATION = 0x04
+};
+
+// 워커 상태 열거형
+enum class WorkerStatus {
+    UNKNOWN,
+    ACTIVE,
+    IDLE,
+    DISCONNECTED,
+    FAILED
+};
+
+// 워커 타입 열거형 (재시작 가능 여부 결정)
+enum class WorkerType {
+    MANUAL,      // 사용자가 수동으로 시작한 워커 (재시작 안함)
+    LOCAL_AUTO,  // 마스터가 자동 시작한 로컬 워커 (재시작 가능)
+    REMOTE_AUTO  // 마스터가 자동 시작한 원격 워ker (재시작 가능)
+};
+
+// 워커 정보 구조체
+struct WorkerInfo {
+    std::string worker_id;
+    std::string ip_address;
+    int port;
+    WorkerType type;
+    WorkerStatus status;
+    std::chrono::steady_clock::time_point last_heartbeat;
+    std::chrono::steady_clock::time_point connected_time;
+    int restart_count;
+
+    WorkerInfo(const std::string& id, const std::string& ip, int p, WorkerType t)
+        : worker_id(id), ip_address(ip), port(p), type(t),
+        status(WorkerStatus::UNKNOWN),
+        last_heartbeat(std::chrono::steady_clock::now()),
+        connected_time(std::chrono::steady_clock::now()),
+        restart_count(0) {
+    }
+};
+
+// 하트비트 메시지 구조체
+struct HeartbeatMessage {
+    std::string worker_id;
+    WorkerStatus status;
+    int processed_chunks;
+
+    std::string serialize() const {
+        std::ostringstream oss;
+        oss << static_cast<int>(status) << " " << processed_chunks << " " << worker_id;
+        return oss.str();
+    }
+
+    static HeartbeatMessage deserialize(const std::string& data) {
+        std::istringstream iss(data);
+        HeartbeatMessage msg;
+        int status_int;
+
+        if (!(iss >> status_int >> msg.processed_chunks >> msg.worker_id)) {
+            throw std::runtime_error("Failed to parse heartbeat message");
+        }
+
+        msg.status = static_cast<WorkerStatus>(status_int);
+        return msg;
+    }
 };
 
 // UTF-8 변환 함수 - Windows API 사용으로 대체

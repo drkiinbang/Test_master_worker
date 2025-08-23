@@ -80,27 +80,27 @@ bash
     # Windows Visual Studio - 모든 .h 파일을 프로젝트에 추가하고 main.cpp만 컴파일
     cl /std:c++17 /EHsc main.cpp ws2_32.lib
     # Linux/macOS
-    g++ -std=c++17 -pthread -o DistributedPCProcess main.cpp
+    g++ -std=c++17 -pthread -o DistributedWorkersd main.cpp
 
 실행:
     # 마스터 서버 시작
-    ./DistributedPCProcess master 8080
+    ./DistributedWorkersd master 8080
     # 워커 실행 (별도 터미널에서)
-    ./DistributedPCProcess worker 127.0.0.1 8080
+    ./DistributedWorkersd worker 127.0.0.1 8080
 
 원격 워커 설정
     workers.conf 파일 편집:
         # 기본 설정들...
         run_local_worker_on_master=true
         # 원격 워커 추가
-        192.168.1.100,username,/path/to/DistributedPCProcess,22
-        192.168.1.101,username,C:\path\to\DistributedPCProcess.exe,22
+        192.168.1.100,username,/path/to/DistributedWorkersd,22
+        192.168.1.101,username,C:\path\to\DistributedWorkersd.exe,22
 
 추가 워커 실행 (선택사항)
     # 새 터미널 창에서
-    ./DistributedPCProcess worker 127.0.0.1 8080
+    ./DistributedWorkersd worker 127.0.0.1 8080
     # 다른 포트를 사용했다면
-    ./DistributedPCProcess worker 127.0.0.1 9000
+    ./DistributedWorkersd worker 127.0.0.1 9000
 
 원격 머신 준비:
 각 원격 머신에 실행 파일 복사

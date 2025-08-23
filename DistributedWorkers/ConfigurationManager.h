@@ -7,12 +7,14 @@
 #pragma once
 
 #include "Common.h"
+#include "ProcessUtils.h"
 
 class ConfigurationManager {
 public:
     static bool ensureConfigExists(const std::string& config_file);
     static RuntimeSettings loadRuntimeSettings(const std::string& config_file);
     static std::vector<RemoteWorkerConfig> loadRemoteWorkers(const std::string& config_file);
+    static std::string getConfigPath(const std::string& config_file);
 
 private:
     static void createDefaultConfig(const std::string& config_file);
@@ -26,9 +28,10 @@ private:
 //==============================================================================
 
 bool ConfigurationManager::ensureConfigExists(const std::string& config_file) {
-    std::ifstream file(config_file);
+    std::string full_path = getConfigPath(config_file);
+    std::ifstream file(full_path);
     if (!file.is_open()) {
-        createDefaultConfig(config_file);
+        createDefaultConfig(full_path);
         return true;
     }
     return true;
@@ -36,7 +39,8 @@ bool ConfigurationManager::ensureConfigExists(const std::string& config_file) {
 
 RuntimeSettings ConfigurationManager::loadRuntimeSettings(const std::string& config_file) {
     RuntimeSettings settings;
-    std::ifstream file(config_file);
+    std::string full_path = getConfigPath(config_file);
+    std::ifstream file(full_path);
 
     if (!file.is_open()) {
         std::wcout << L"Using default settings (config file not found)\n";
@@ -109,7 +113,8 @@ RuntimeSettings ConfigurationManager::loadRuntimeSettings(const std::string& con
 
 std::vector<RemoteWorkerConfig> ConfigurationManager::loadRemoteWorkers(const std::string& config_file) {
     std::vector<RemoteWorkerConfig> workers;
-    std::ifstream file(config_file);
+    std::string full_path = getConfigPath(config_file);
+    std::ifstream file(full_path);
 
     if (!file.is_open()) {
         std::wcout << L"Config file not found. Running with local workers only.\n";
@@ -150,10 +155,33 @@ std::vector<RemoteWorkerConfig> ConfigurationManager::loadRemoteWorkers(const st
     return workers;
 }
 
+std::string ConfigurationManager::getConfigPath(const std::string& config_file) {
+    // 절대 경로인 경우 그대로 사용
+    if (config_file.find(':') != std::string::npos || config_file[0] == '/') {
+        return config_file;
+    }
+
+    // 상대 경로인 경우 실행파일 디렉토리 기준으로 변경
+    std::string exe_path = ProcessUtils::getSelfExecutablePath();
+    if (exe_path.empty()) {
+        return config_file;  // 실패시 원래 경로 사용
+    }
+
+    // 실행파일 경로에서 디렉토리 부분만 추출
+    size_t last_slash = exe_path.find_last_of("/\\");
+    if (last_slash != std::string::npos) {
+        std::string exe_dir = exe_path.substr(0, last_slash + 1);
+        return exe_dir + config_file;
+    }
+
+    return config_file;
+}
+
 void ConfigurationManager::createDefaultConfig(const std::string& config_file) {
-    std::ofstream file(config_file);
+    std::string full_path = getConfigPath(config_file);
+    std::ofstream file(full_path);
     if (!file.is_open()) {
-        std::wcerr << L"Failed to create config file: " << utf8_to_wstring(config_file) << L"\n";
+        std::wcerr << L"Failed to create config file: " << utf8_to_wstring(full_path) << L"\n";
         return;
     }
 

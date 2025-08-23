@@ -49,6 +49,118 @@ def _ensure_known_hosts_entry(host: str, port: int, pkey) -> None:
         print(f"[LOCAL] known_hosts 이미 등록됨: {label}")
 
 # ---------------- GUI 유틸 ----------------
+'''
+def ask_password_with_visibility_option(title: str, prompt: str):
+    """GUI가 가능한 경우 비밀번호 보기 옵션과 함께 입력받기"""
+    try:
+        import tkinter as tk
+        from tkinter import simpledialog, messagebox, BooleanVar, Checkbutton, Entry, Label, Button, Frame
+        
+        class PasswordDialog:
+            def __init__(self, parent, title, prompt):
+                self.result = None
+                
+                # 다이얼로그 창 생성
+                self.dialog = tk.Toplevel(parent)
+                self.dialog.title(title)
+                self.dialog.geometry("400x150")
+                self.dialog.resizable(False, False)
+                self.dialog.transient(parent)
+                self.dialog.grab_set()
+                
+                # 창을 화면 중앙에 배치
+                self.dialog.update_idletasks()
+                x = (self.dialog.winfo_screenwidth() // 2) - (400 // 2)
+                y = (self.dialog.winfo_screenheight() // 2) - (150 // 2)
+                self.dialog.geometry(f"400x150+{x}+{y}")
+                
+                # 프롬프트 라벨
+                Label(self.dialog, text=prompt, font=("Arial", 10)).pack(pady=(10, 5))
+                
+                # 비밀번호 입력 프레임
+                input_frame = Frame(self.dialog)
+                input_frame.pack(pady=5, padx=20, fill='x')
+                
+                # 비밀번호 입력 필드
+                self.password_var = tk.StringVar()
+                self.show_password = BooleanVar()
+                self.entry = Entry(input_frame, textvariable=self.password_var, 
+                                 show='*', font=("Arial", 10), width=40)
+                self.entry.pack(fill='x')
+                
+                # 비밀번호 보기 체크박스
+                check_frame = Frame(self.dialog)
+                check_frame.pack(pady=5)
+                self.show_checkbox = Checkbutton(check_frame, text="비밀번호 보기", 
+                                               variable=self.show_password,
+                                               command=self.toggle_password_visibility,
+                                               font=("Arial", 9))
+                self.show_checkbox.pack()
+                
+                # 버튼 프레임
+                button_frame = Frame(self.dialog)
+                button_frame.pack(pady=10)
+                
+                Button(button_frame, text="확인", command=self.ok_clicked, 
+                      width=8, font=("Arial", 9)).pack(side='left', padx=5)
+                Button(button_frame, text="취소", command=self.cancel_clicked, 
+                      width=8, font=("Arial", 9)).pack(side='left', padx=5)
+                
+                # 엔터 키로 확인
+                self.entry.bind('<Return>', lambda e: self.ok_clicked())
+                self.entry.bind('<Escape>', lambda e: self.cancel_clicked())
+                
+                # 포커스 설정
+                self.entry.focus_set()
+                
+            def toggle_password_visibility(self):
+                if self.show_password.get():
+                    self.entry.config(show='')
+                else:
+                    self.entry.config(show='*')
+                    
+            def ok_clicked(self):
+                self.result = self.password_var.get()
+                self.dialog.destroy()
+                
+            def cancel_clicked(self):
+                self.result = None
+                self.dialog.destroy()
+        
+        root = tk.Tk()
+        root.withdraw()
+        
+        try:
+            dialog = PasswordDialog(root, title, prompt)
+            root.wait_window(dialog.dialog)
+            return dialog.result
+        finally:
+            try: 
+                root.destroy()
+            except Exception: 
+                pass
+                
+    except Exception as e:
+        print(f"[DEBUG] GUI 비밀번호 입력 실패, 콘솔로 전환: {e}")
+        # GUI 실패 시 콘솔 입력으로 폴백
+        import getpass
+        try:
+            # 콘솔에서도 보기 옵션 제공
+            show_option = input(f"{title} - 비밀번호를 화면에 표시하시겠습니까? (y/N): ").lower().strip()
+            
+            if show_option in ['y', 'yes', '예']:
+                pwd = input(f"{title} - {prompt} (표시됨): ")
+            else:
+                pwd = getpass.getpass(f"{title} - {prompt} (숨김): ")
+            return pwd if pwd else None
+        except (EOFError, KeyboardInterrupt):
+            return None
+            
+def ask_password_masked(title: str, prompt: str):
+    """기존 함수 호환성을 위해 유지 (새 함수 호출)"""
+    return ask_password_with_visibility_option(title, prompt)1
+'''
+
 def ask_password_masked(title: str, prompt: str):
     try:
         import tkinter as tk

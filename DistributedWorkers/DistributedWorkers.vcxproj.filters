@@ -48,4 +48,7 @@
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
+  <ItemGroup>
+    <Text Include="설정 가이드.txt" />
+  </ItemGroup>
 </Project>

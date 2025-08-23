@@ -132,7 +132,6 @@
     <ClCompile Include="main.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="Config.h" />
     <ClInclude Include="Master.h" />
     <ClInclude Include="Network.h" />
     <ClInclude Include="PointData.h" />
